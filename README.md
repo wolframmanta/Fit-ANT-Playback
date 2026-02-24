@@ -1,17 +1,28 @@
 # FIT ANT+ Playback Tool
 
-Broadcasts power and cadence data from FIT files via ANT+ USB dongle for use with Zwift and other ANT+ compatible applications.
+A **development and testing utility** that broadcasts power and cadence data via ANT+ USB dongle. Built for developers, testers, and equipment manufacturers who need to simulate ANT+ power meter signals without requiring actual cycling hardware.
+
+## Intended Use
+
+This tool is designed for **legitimate testing and development purposes**, including:
+
+- **Application development** — Test ANT+ integration in fitness apps without needing a bike, trainer, or power meter
+- **QA and regression testing** — Replay recorded FIT files to verify consistent behavior across software versions
+- **Hardware/software validation** — Confirm that devices and applications correctly receive and interpret ANT+ power data
+- **Demo and presentation** — Showcase ANT+ compatible software without live cycling equipment
+
+**This tool is NOT intended for cheating, falsifying results, or gaining unfair advantages in competitive platforms like Zwift, TrainerRoad, or any other online racing or training service.** Use responsibly and in accordance with the terms of service of any platform you connect to.
 
 ## Features
 
-- 📁 Browse and load FIT files with power/cadence data
-- 📡 Broadcast data via ANT+ Bike Power profile (Device Type 0x0B)
-- ⏯️ Play, pause, and stop playback controls
-- ⏩ Variable playback speed (0.5x - 4.0x)
-- 📊 Real-time display of power and cadence values
-- 📈 Progress tracking with time display
-- 🎛️ Manual Power mode with slider, preset buttons (including 0W), and direct entry
-- ⚖️ W/kg input with configurable weight — enter watts per kilogram and the tool calculates power automatically
+- Browse and load FIT files with power/cadence data
+- Broadcast data via ANT+ Bike Power profile (Device Type 0x0B)
+- Play, pause, and stop playback controls
+- Variable playback speed (0.5x - 4.0x)
+- Real-time display of power and cadence values
+- Progress tracking with time display
+- Manual Power mode with slider, preset buttons (including 0W), and direct entry
+- W/kg input with configurable weight — enter watts per kilogram and the tool calculates power automatically
 
 ## Requirements
 
@@ -59,7 +70,7 @@ sudo udevadm control --reload-rules
 
 4. Click "Play" to start broadcasting
 
-5. Open Zwift and pair your ANT+ power source - it will appear as a Bike Power sensor
+5. Pair the ANT+ power source in your application under test — it will appear as a Bike Power sensor
 
 ### Manual Power Mode
 
@@ -81,16 +92,16 @@ The tool broadcasts using the **ANT+ Bike Power Profile**:
 
 ### ANT+ Won't Connect
 - Ensure the ANT+ USB stick is plugged in
-- Close any other applications using the ANT+ stick (Zwift, TrainerRoad, etc.)
+- Close any other applications using the ANT+ stick
 - On Linux/macOS, you may need elevated permissions
 
 ### No Data in FIT File
 - Ensure your FIT file contains `record` messages with `power` and/or `cadence` fields
 - Files from bike computers, power meters, or smart trainers typically have this data
 
-### Zwift Won't See the Device
-- Make sure playback is running before searching in Zwift
-- Select ANT+ (not Bluetooth) in Zwift's pairing screen
+### Device Not Detected
+- Make sure playback is running before searching for sensors in your application
+- Select ANT+ (not Bluetooth) in your application's pairing screen
 - The device will appear as a power source
 
 ## License
