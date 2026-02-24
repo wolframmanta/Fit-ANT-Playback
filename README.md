@@ -59,9 +59,9 @@ sudo udevadm control --reload-rules
 
 ## Usage
 
-1. Run the application:
+1. Run the application (requires `sudo` for USB access to the ANT+ stick):
    ```bash
-   python fit_ant_playback.py
+   sudo python fit_ant_playback.py
    ```
 
 2. Click "Browse..." to select a FIT file containing power/cadence data
