@@ -10,6 +10,8 @@ Broadcasts power and cadence data from FIT files via ANT+ USB dongle for use wit
 - ⏩ Variable playback speed (0.5x - 4.0x)
 - 📊 Real-time display of power and cadence values
 - 📈 Progress tracking with time display
+- 🎛️ Manual Power mode with slider, preset buttons (including 0W), and direct entry
+- ⚖️ W/kg input with configurable weight — enter watts per kilogram and the tool calculates power automatically
 
 ## Requirements
 
@@ -58,6 +60,14 @@ sudo udevadm control --reload-rules
 4. Click "Play" to start broadcasting
 
 5. Open Zwift and pair your ANT+ power source - it will appear as a Bike Power sensor
+
+### Manual Power Mode
+
+1. Switch to the **Manual Power** tab
+2. Set power using the slider, direct entry, or preset buttons (0, 150, 200, ... 1200W)
+3. To use **W/kg**: enter your weight in kg, type a W/kg value, and press Enter or click Apply — power is calculated automatically
+4. Adjust cadence as needed
+5. Click **Start Broadcasting** to begin
 
 ## ANT+ Details
 
