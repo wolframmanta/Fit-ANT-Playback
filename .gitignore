@@ -40,5 +40,4 @@ Thumbs.db
 
 # Project specific
 *.fit
-test_*.py
 *.command

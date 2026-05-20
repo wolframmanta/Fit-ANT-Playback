@@ -1,545 +1,38 @@
 #!/usr/bin/env python3
-# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
-# pyright: reportIndexIssue=false, reportArgumentType=false
 """
 FIT File ANT+ Playback Tool
 Broadcasts power and cadence data from a FIT file via ANT+ USB dongle.
 Can be read by Zwift or other ANT+ compatible applications.
 """
 
+import logging
+import os
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import threading
 import time
-import struct
 from pathlib import Path
-from typing import List, Tuple, Optional
-from dataclasses import dataclass
 
-try:
-    import fitdecode  # type: ignore[import-untyped]
-except ImportError:
-    fitdecode = None  # type: ignore[assignment]
-
-try:
-    from ant.core import driver, node, event, message  # type: ignore[import-not-found]
-    from ant.core.constants import *  # type: ignore[import-not-found]
-    ANT_AVAILABLE = True
-except ImportError:
-    try:
-        # Try alternative import structure
-        from openant.easy.node import Node  # type: ignore[import-untyped]
-        from openant.easy.channel import Channel  # type: ignore[import-untyped]
-        ANT_AVAILABLE = True
-    except ImportError:
-        ANT_AVAILABLE = False
+from fit_ant_playback_core.ant_usb import AntUsbBroadcaster
+from fit_ant_playback_core.fit_parser import FitFileParser, fitdecode_available
+from fit_ant_playback_core.models import PowerCadenceRecord
+from fit_ant_playback_core.playback_engine import FitPlaybackEngine, ManualBroadcastEngine
 
 
-@dataclass
-class PowerCadenceRecord:
-    """Single record of power and cadence data"""
-    timestamp: float  # seconds from start
-    power: int  # watts
-    cadence: int  # rpm
+class TkLogHandler(logging.Handler):
+    """Routes package logging into the Tk log widget on the main thread."""
 
+    def __init__(self, root: tk.Tk, write_log):
+        super().__init__()
+        self.root = root
+        self.write_log = write_log
 
-class FitFileParser:
-    """Parses FIT files to extract power and cadence data"""
-    
-    def __init__(self):
-        if fitdecode is None:
-            raise ImportError("fitdecode library not installed. Run: pip install fitdecode")
-    
-    def parse(self, filepath: str) -> List[PowerCadenceRecord]:
-        """Parse a FIT file and extract power/cadence records"""
-        records = []
-        start_timestamp = None
-        
-        with fitdecode.FitReader(filepath) as fit:  # type: ignore[union-attr]
-            for frame in fit:
-                if isinstance(frame, fitdecode.FitDataMessage):  # type: ignore[union-attr]
-                    if frame.name == 'record':
-                        timestamp = None
-                        power = None
-                        cadence = None
-                        
-                        for field in frame.fields:
-                            if field.name == 'timestamp':
-                                timestamp = field.value
-                            elif field.name == 'power':
-                                power = field.value
-                            elif field.name == 'cadence':
-                                cadence = field.value
-                        
-                        if timestamp is not None:
-                            if start_timestamp is None:
-                                start_timestamp = timestamp
-                            
-                            # Calculate relative timestamp in seconds
-                            if hasattr(timestamp, 'timestamp'):
-                                ts = timestamp.timestamp()
-                                st = start_timestamp.timestamp() if hasattr(start_timestamp, 'timestamp') else start_timestamp
-                            else:
-                                ts = timestamp
-                                st = start_timestamp
-                            
-                            relative_time = ts - st
-                            
-                            # Only add if we have at least power or cadence
-                            if power is not None or cadence is not None:
-                                records.append(PowerCadenceRecord(
-                                    timestamp=relative_time,
-                                    power=power if power is not None else 0,
-                                    cadence=cadence if cadence is not None else 0
-                                ))
-        
-        return records
-
-
-class ANTBikePowerBroadcaster:
-    """
-    Broadcasts bike power and cadence via ANT+
-    
-    ANT+ Bike Power Profile (Device Type 0x0B = 11)
-    Uses Standard Power-Only main data page (0x10)
-    """
-    
-    # ANT+ Bike Power constants
-    DEVICE_TYPE = 0x0B  # Bike Power
-    DEVICE_NUMBER = 12345  # Arbitrary device number
-    TRANSMISSION_TYPE = 0x05  # Independent channel, global pages supported
-    CHANNEL_PERIOD = 8182  # ~4.049 Hz (standard for bike power)
-    CHANNEL_FREQUENCY = 57  # 2457 MHz (ANT+ frequency)
-    NETWORK_KEY = [0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45]  # ANT+ Network Key
-    
-    def __init__(self):
-        self.node = None
-        self.channel = None
-        self.running = False
-        self.event_count = 0
-        self.accumulated_power = 0
-        self.crank_event_time = 0
-        self.crank_revolutions = 0
-        
-    def _check_usb_device(self):
-        """Check if ANT+ USB stick is detected"""
+    def emit(self, record: logging.LogRecord) -> None:
+        message = self.format(record)
         try:
-            import usb.core  # type: ignore[import-untyped]
-            # Common ANT+ USB stick vendor/product IDs
-            ant_sticks = [
-                (0x0FCF, 0x1008),  # Dynastream ANT USB-m Stick
-                (0x0FCF, 0x1009),  # Dynastream ANT USB2 Stick  
-                (0x0FCF, 0x1004),  # Dynastream ANT USB Stick
-            ]
-            for vid, pid in ant_sticks:
-                device = usb.core.find(idVendor=vid, idProduct=pid)
-                if device:
-                    return True, f"Found ANT+ stick (VID:{hex(vid)} PID:{hex(pid)})"
-            return False, "No ANT+ USB stick found. Please plug in your ANT+ dongle."
-        except Exception as e:
-            return False, f"USB detection error: {e}"
-        
-    def start(self):
-        """Initialize ANT+ node and channel"""
-        import os
-        
-        # Check if running with admin privileges on macOS
-        if os.name != 'nt' and os.geteuid() != 0:
-            print("Warning: Not running as root. ANT+ USB access may fail.")
-            print("Try running with: sudo python fit_ant_playback.py")
-        
-        # First check if device is even present
-        found, msg = self._check_usb_device()
-        print(msg)
-        if not found:
-            return False
-            
-        try:
-            # Try using openant
-            from openant.easy.node import Node  # type: ignore[import-untyped]
-            from openant.easy.channel import Channel  # type: ignore[import-untyped]
-
-            print("Initializing ANT+ node...")
-            self.node = Node()
-            print("Setting network key...")
-            self.node.set_network_key(0x00, bytes(self.NETWORK_KEY))  # type: ignore[arg-type]
-            
-            print("Creating transmit channel...")
-            self.channel = self.node.new_channel(Channel.Type.BIDIRECTIONAL_TRANSMIT)
-            self.channel.set_id(self.DEVICE_NUMBER, self.DEVICE_TYPE, self.TRANSMISSION_TYPE)
-            self.channel.set_period(self.CHANNEL_PERIOD)
-            self.channel.set_rf_freq(self.CHANNEL_FREQUENCY)
-            
-            print("Opening channel...")
-            self.channel.open()
-            self.running = True
-            print("ANT+ channel opened successfully!")
-            return True
-            
-        except PermissionError as e:
-            print(f"Permission denied: {e}")
-            print("Run with sudo: sudo python fit_ant_playback.py")
-            return False
-        except Exception as e:
-            print(f"Error starting ANT+: {e}")
-            if "timed out" in str(e).lower() or "timeout" in str(e).lower():
-                print("Timeout error - this usually means permission denied.")
-                print("On macOS, run with: sudo python fit_ant_playback.py")
-            return False
-    
-    def stop(self):
-        """Stop ANT+ broadcast"""
-        self.running = False
-        if self.channel:
-            try:
-                self.channel.close()
-            except:
-                pass
-        if self.node:
-            try:
-                self.node.stop()
-            except:
-                pass
-    
-    def broadcast_power_cadence(self, power: int, cadence: int):
-        """
-        Broadcast power and cadence using ANT+ Bike Power Profile
-        
-        Data Page 0x10 - Standard Power-Only Main Data Page:
-        Byte 0: Data Page Number (0x10)
-        Byte 1: Update Event Count
-        Byte 2: Pedal Power (0xFF = not used)
-        Byte 3: Instantaneous Cadence
-        Byte 4-5: Accumulated Power (little-endian)
-        Byte 6-7: Instantaneous Power (little-endian)
-        """
-        if not self.running or not self.channel:
-            return
-        
-        self.event_count = (self.event_count + 1) & 0xFF
-        self.accumulated_power = (self.accumulated_power + power) & 0xFFFF
-        
-        # Clamp values
-        power = min(max(power, 0), 65535)
-        cadence = min(max(cadence, 0), 254)
-        
-        # Build data page 0x10 (Standard Power-Only)
-        data = bytes([
-            0x10,  # Data page number
-            self.event_count,  # Update event count
-            0xFF,  # Pedal power not used
-            cadence,  # Instantaneous cadence
-            self.accumulated_power & 0xFF,  # Accumulated power LSB
-            (self.accumulated_power >> 8) & 0xFF,  # Accumulated power MSB
-            power & 0xFF,  # Instantaneous power LSB
-            (power >> 8) & 0xFF  # Instantaneous power MSB
-        ])
-        
-        try:
-            self.channel.send_broadcast_data(data)  # type: ignore[arg-type]
-        except Exception as e:
-            print(f"Broadcast error: {e}")
-
-
-class ANTBikePowerBroadcasterUSB:
-    """
-    Direct USB ANT+ broadcaster - bypasses openant for macOS compatibility
-    Implements the ANT protocol directly over USB
-    """
-    
-    # ANT+ Constants
-    DEVICE_TYPE = 0x0B  # Bike Power
-    DEVICE_NUMBER = 12345
-    TRANSMISSION_TYPE = 0x05
-    CHANNEL_PERIOD = 8182
-    CHANNEL_FREQUENCY = 57
-    NETWORK_KEY = [0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45]
-    
-    # ANT Message IDs
-    MSG_SYSTEM_RESET = 0x4A
-    MSG_SET_NETWORK_KEY = 0x46
-    MSG_ASSIGN_CHANNEL = 0x42
-    MSG_SET_CHANNEL_ID = 0x51
-    MSG_SET_CHANNEL_PERIOD = 0x43
-    MSG_SET_CHANNEL_FREQ = 0x45
-    MSG_OPEN_CHANNEL = 0x4B
-    MSG_CLOSE_CHANNEL = 0x4C
-    MSG_BROADCAST_DATA = 0x4E
-    MSG_CHANNEL_RESPONSE = 0x40
-    MSG_STARTUP = 0x6F
-    
-    # Channel types
-    CHANNEL_TYPE_BIDIRECTIONAL_TRANSMIT = 0x10
-    
-    def __init__(self):
-        self.device = None
-        self.ep_out = None
-        self.ep_in = None
-        self.running = False
-        self.event_count = 0
-        self.accumulated_power = 0
-        self.channel_number = 0
-        self.network_number = 0
-        self.reader_thread = None
-        self._stop_reader = False
-        
-    def _find_ant_stick(self):
-        """Find ANT+ USB stick"""
-        try:
-            import usb.core  # type: ignore[import-untyped]
-            
-            ant_sticks = [
-                (0x0FCF, 0x1008),  # Dynastream ANT USB-m Stick
-                (0x0FCF, 0x1009),  # Dynastream ANT USB2 Stick
-                (0x0FCF, 0x1004),  # Dynastream ANT USB Stick
-            ]
-            
-            for vid, pid in ant_sticks:
-                device = usb.core.find(idVendor=vid, idProduct=pid)
-                if device:
-                    return device
-            return None
-        except ImportError:
-            return None
-    
-    def _build_message(self, msg_id: int, data: bytes) -> bytes:
-        """Build an ANT message with sync byte, length, and checksum"""
-        sync = 0xA4
-        length = len(data)
-        msg = bytes([sync, length, msg_id]) + data
-        checksum = 0
-        for b in msg:
-            checksum ^= b
-        return msg + bytes([checksum])
-    
-    def _send_message(self, msg_id: int, data: bytes, timeout: int = 1000) -> bool:
-        """Send an ANT message"""
-        if not self.device or not self.ep_out:
-            return False
-        try:
-            msg = self._build_message(msg_id, data)
-            self.ep_out.write(msg, timeout)
-            time.sleep(0.1)  # Delay for device processing
-            return True
-        except Exception as e:
-            print(f"Send error: {e}")
-            return False
-    
-    def _read_response(self, timeout=1000) -> bytes:
-        """Read response from ANT stick"""
-        if not self.device or not self.ep_in:
-            return bytes()
-        try:
-            data = self.ep_in.read(64, timeout)
-            return bytes(data)
-        except Exception:
-            return bytes()
-    
-    def start(self):
-        """Initialize ANT+ stick with raw USB"""
-        import usb.core  # type: ignore[import-untyped]
-        import usb.util  # type: ignore[import-untyped]
-        
-        self.device = self._find_ant_stick()
-        if not self.device:
-            print("ANT+ USB stick not found")
-            return False
-            
-        try:
-            print(f"Found ANT+ device: VID={hex(self.device.idVendor)} PID={hex(self.device.idProduct)}")
-            
-            # Full USB device reset first
-            try:
-                self.device.reset()
-                time.sleep(0.5)
-            except Exception as e:
-                print(f"Device reset warning: {e}")
-            
-            # Reset and configure USB device
-            try:
-                if self.device.is_kernel_driver_active(0):
-                    self.device.detach_kernel_driver(0)
-            except Exception:
-                pass
-            
-            # Clear any stale configurations
-            try:
-                usb.util.dispose_resources(self.device)
-            except Exception:
-                pass
-                
-            self.device.set_configuration()
-            cfg = self.device.get_active_configuration()
-            intf = cfg[(0, 0)]
-            
-            # Claim the interface explicitly
-            try:
-                usb.util.claim_interface(self.device, intf)
-            except Exception as e:
-                print(f"Interface claim warning: {e}")
-            
-            # Find endpoints
-            self.ep_out = usb.util.find_descriptor(
-                intf,
-                custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
-            )
-            self.ep_in = usb.util.find_descriptor(
-                intf,
-                custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
-            )
-            
-            if not self.ep_out or not self.ep_in:
-                print("Could not find USB endpoints")
-                return False
-                
-            print("USB endpoints configured")
-            
-            # Clear any pending data from the input endpoint
-            for _ in range(3):
-                try:
-                    self.ep_in.read(64, 100)
-                except Exception:
-                    pass
-            
-            # Reset ANT system
-            print("Resetting ANT...")
-            self._send_message(self.MSG_SYSTEM_RESET, bytes([0x00]))
-            time.sleep(0.5)
-            
-            # Clear startup message
-            for _ in range(3):
-                try:
-                    self.ep_in.read(64, 200)
-                except Exception:
-                    pass
-            
-            # Set network key
-            print("Setting network key...")
-            network_data = bytes([self.network_number]) + bytes(self.NETWORK_KEY)
-            if not self._send_message(self.MSG_SET_NETWORK_KEY, network_data):
-                return False
-            self._read_response()
-            
-            # Assign channel (transmit)
-            print("Assigning channel...")
-            channel_data = bytes([self.channel_number, self.CHANNEL_TYPE_BIDIRECTIONAL_TRANSMIT, self.network_number])
-            if not self._send_message(self.MSG_ASSIGN_CHANNEL, channel_data):
-                return False
-            self._read_response()
-            
-            # Set channel ID
-            print("Setting channel ID...")
-            device_num_lsb = self.DEVICE_NUMBER & 0xFF
-            device_num_msb = (self.DEVICE_NUMBER >> 8) & 0xFF
-            id_data = bytes([self.channel_number, device_num_lsb, device_num_msb, 
-                           self.DEVICE_TYPE, self.TRANSMISSION_TYPE])
-            if not self._send_message(self.MSG_SET_CHANNEL_ID, id_data):
-                return False
-            self._read_response()
-            
-            # Set channel period
-            print("Setting channel period...")
-            period_lsb = self.CHANNEL_PERIOD & 0xFF
-            period_msb = (self.CHANNEL_PERIOD >> 8) & 0xFF
-            period_data = bytes([self.channel_number, period_lsb, period_msb])
-            if not self._send_message(self.MSG_SET_CHANNEL_PERIOD, period_data):
-                return False
-            self._read_response()
-            
-            # Set RF frequency
-            print("Setting RF frequency...")
-            freq_data = bytes([self.channel_number, self.CHANNEL_FREQUENCY])
-            if not self._send_message(self.MSG_SET_CHANNEL_FREQ, freq_data):
-                return False
-            self._read_response()
-            
-            # Open channel
-            print("Opening channel...")
-            if not self._send_message(self.MSG_OPEN_CHANNEL, bytes([self.channel_number])):
-                return False
-            self._read_response()
-            
-            self.running = True
-            print("ANT+ channel opened successfully!")
-            print(f"Broadcasting as Device ID: {self.DEVICE_NUMBER}")
-            
-            # Start background reader thread to drain incoming data
-            self._stop_reader = False
-            self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
-            self.reader_thread.start()
-            
-            return True
-            
-        except Exception as e:
-            print(f"USB initialization error: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-    
-    def _reader_loop(self):
-        """Background thread to continuously read from USB to prevent buffer overflow"""
-        while not self._stop_reader and self.running and self.ep_in:
-            try:
-                # Read with short timeout
-                data = self.ep_in.read(64, 100)
-                # Could process responses here if needed
-            except Exception:
-                pass
-            time.sleep(0.01)  # Small delay to prevent tight loop
-    
-    def stop(self):
-        """Stop ANT+ broadcast"""
-        self._stop_reader = True
-        if self.reader_thread:
-            self.reader_thread.join(timeout=1)
-        if self.running and self.device:
-            try:
-                self._send_message(self.MSG_CLOSE_CHANNEL, bytes([self.channel_number]))
-            except:
-                pass
-        self.running = False
-        self.device = None
-        
-    def broadcast_power_cadence(self, power: int, cadence: int):
-        """Broadcast power and cadence data"""
-        if not self.running:
-            return
-            
-        self.event_count = (self.event_count + 1) & 0xFF
-        self.accumulated_power = (self.accumulated_power + power) & 0xFFFF
-        
-        # Clamp values
-        power = min(max(power, 0), 65535)
-        cadence = min(max(cadence, 0), 254)
-        
-        # Build data page 0x10 (Standard Power-Only)
-        # Channel number + 8 bytes of data
-        data = bytes([
-            self.channel_number,
-            0x10,  # Data page number
-            self.event_count,  # Update event count
-            0xFF,  # Pedal power not used
-            cadence,  # Instantaneous cadence
-            self.accumulated_power & 0xFF,  # Accumulated power LSB
-            (self.accumulated_power >> 8) & 0xFF,  # Accumulated power MSB
-            power & 0xFF,  # Instantaneous power LSB
-            (power >> 8) & 0xFF  # Instantaneous power MSB
-        ])
-        
-        try:
-            # Build message directly for faster broadcast (no sleep)
-            msg = self._build_message(self.MSG_BROADCAST_DATA, data)
-            self.ep_out.write(msg, 100)  # Short timeout for broadcast
-            
-            # Drain any incoming responses to prevent buffer overflow
-            try:
-                self.ep_in.read(64, 10)  # Quick non-blocking read
-            except:
-                pass
-        except Exception as e:
-            # Only print errors occasionally to not spam
-            if self.event_count % 100 == 1:
-                print(f"Broadcast error: {e}")
+            self.root.after(0, self.write_log, message)
+        except tk.TclError:
+            pass
 
 
 class FitAntPlaybackApp:
@@ -578,17 +71,20 @@ class FitAntPlaybackApp:
         self.root.configure(bg=self.BG_DARK)
         self.root.minsize(900, 650)
 
-        self.fit_records: List[PowerCadenceRecord] = []
-        self.broadcaster = None
-        self.playback_thread = None
+        self.fit_records: list[PowerCadenceRecord] = []
+        self.broadcaster: AntUsbBroadcaster | None = None
+        self.playback_engine: FitPlaybackEngine | None = None
         self.is_playing = False
         self.is_paused = False
         self.current_index = 0
         self.playback_speed = 1.0
 
         # Manual mode state
+        self.manual_engine: ManualBroadcastEngine | None = None
         self.manual_broadcasting = False
-        self.manual_thread = None
+        self._manual_lock = threading.Lock()
+        self._manual_power = 300
+        self._manual_cadence = 85
 
         # FIT file info vars (set in _build_fit_tab)
         self.records_var: tk.StringVar = tk.StringVar(value="0")
@@ -598,6 +94,11 @@ class FitAntPlaybackApp:
 
         self._setup_styles()
         self._setup_ui()
+        self._configure_logging()
+        self._log("FIT ANT+ Playback ready")
+        self._log("Select a FIT file or switch to Manual Power mode")
+        if not fitdecode_available():
+            self._log("WARNING: fitdecode is not installed; FIT file loading is disabled")
 
     # ------------------------------------------------------------------
     # Styling
@@ -752,9 +253,6 @@ class FitAntPlaybackApp:
 
         # ---- Log ----
         self._build_log(outer, row=4)
-
-        self._log("FIT ANT+ Playback ready")
-        self._log("Select a FIT file or switch to Manual Power mode")
 
     # ---------- FIT Playback tab ----------
     def _build_fit_tab(self):
@@ -1038,6 +536,19 @@ class FitAntPlaybackApp:
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
+    def _configure_logging(self):
+        self.logger = logging.getLogger("fit_ant_playback")
+        self.logger.setLevel(logging.INFO)
+        self.logger.propagate = False
+
+        for handler in list(self.logger.handlers):
+            if isinstance(handler, TkLogHandler):
+                self.logger.removeHandler(handler)
+
+        handler = TkLogHandler(self.root, self._log)
+        handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        self.logger.addHandler(handler)
+
     def _log(self, message: str):
         """Add message to log"""
         self.log_text.configure(state="normal")
@@ -1098,17 +609,20 @@ class FitAntPlaybackApp:
 
     def _connect_ant(self):
         """Connect to ANT+ USB stick"""
-        import os
-
         if self.broadcaster and self.broadcaster.running:
+            if self.is_playing or self.is_paused:
+                self._stop()
+            if self.manual_broadcasting:
+                self._stop_manual()
             self.broadcaster.stop()
             self.broadcaster = None
             self.ant_status_var.set("Not Connected")
+            self.ant_status_label.configure(foreground=self.WARNING)
             self.connect_btn.configure(text="Connect ANT+")
             self._log("ANT+ disconnected")
             return
 
-        is_root = os.name == "nt" or os.geteuid() == 0
+        is_root = os.name == "nt" or not hasattr(os, "geteuid") or os.geteuid() == 0
         if not is_root:
             self._log("WARNING: Not running with admin privileges!")
             self._log("ANT+ USB access requires sudo on macOS")
@@ -1117,7 +631,7 @@ class FitAntPlaybackApp:
         self._log("Connecting to ANT+ USB stick...")
 
         try:
-            self.broadcaster = ANTBikePowerBroadcasterUSB()
+            self.broadcaster = AntUsbBroadcaster(logger=self.logger)
             if self.broadcaster.start():
                 self.ant_status_var.set("Connected")
                 self.ant_status_label.configure(foreground=self.SUCCESS)
@@ -1127,17 +641,17 @@ class FitAntPlaybackApp:
             else:
                 self.ant_status_var.set("Connection Failed")
                 self.ant_status_label.configure(foreground=self.ERROR)
-                self._log("Failed to connect to ANT+ stick")
+                detail = self.broadcaster.last_error if self.broadcaster else None
+                self._log(f"Failed to connect to ANT+ stick: {detail or 'unknown error'}")
 
                 if not is_root:
                     messagebox.showerror("Permission Denied",
                         "ANT+ USB access requires admin privileges on macOS.\n\n"
                         "Please restart the app with sudo:\n\n"
-                        "sudo python fit_ant_playback.py\n\n"
-                        "Or use the run_with_sudo.command script.")
+                        "sudo python fit_ant_playback.py")
                 else:
                     messagebox.showerror("Error",
-                        "Failed to connect to ANT+ USB stick.\n\n"
+                        f"Failed to connect to ANT+ USB stick.\n\n{detail or ''}\n\n"
                         "Make sure:\n"
                         "- ANT+ USB stick is plugged in\n"
                         "- No other application is using it (Zwift, TrainerRoad, etc.)")
@@ -1151,6 +665,8 @@ class FitAntPlaybackApp:
         """Handle playback speed change"""
         speed_str = self.speed_var.get()
         self.playback_speed = float(speed_str.replace("x", ""))
+        if self.playback_engine:
+            self.playback_engine.set_speed(self.playback_speed)
         self._log(f"Playback speed set to {speed_str}")
 
     def _play(self):
@@ -1166,15 +682,25 @@ class FitAntPlaybackApp:
             messagebox.showwarning("Warning", "Please connect ANT+ first")
             return
 
-        if self.is_paused:
+        if self.playback_engine and self.is_paused:
+            self.playback_engine.resume()
             self.is_paused = False
             self._log("Playback resumed")
         else:
+            self.playback_engine = FitPlaybackEngine(
+                records=self.fit_records,
+                broadcast=self._broadcast_playback_record,
+                on_update=lambda record, total, index: self.root.after(
+                    0, self._update_playback_ui, record, total, index
+                ),
+                on_finished=lambda: self.root.after(0, self._playback_finished),
+                on_error=lambda exc: self.root.after(0, self._playback_error, exc),
+                speed=self.playback_speed,
+            )
             self.is_playing = True
+            self.is_paused = False
             self.current_index = 0
-            self.playback_thread = threading.Thread(target=self._playback_loop,
-                                                    daemon=True)
-            self.playback_thread.start()
+            self.playback_engine.start()
             self._log("Playback started")
 
         self.play_btn.configure(state="disabled")
@@ -1182,15 +708,25 @@ class FitAntPlaybackApp:
         self.stop_btn.configure(state="normal")
         self.browse_btn.configure(state="disabled")
 
+    def _broadcast_playback_record(self, record: PowerCadenceRecord):
+        if not self.broadcaster or not self.broadcaster.running:
+            raise RuntimeError("ANT+ disconnected")
+        self.broadcaster.broadcast_power_cadence(record.power, record.cadence)
+
     def _pause(self):
         """Pause playback"""
+        if self.playback_engine:
+            self.playback_engine.pause()
         self.is_paused = True
         self.play_btn.configure(state="normal")
         self.pause_btn.configure(state="disabled")
         self._log("Playback paused")
 
-    def _stop(self):
+    def _stop(self, *, log: bool = True):
         """Stop playback"""
+        if self.playback_engine:
+            self.playback_engine.stop()
+            self.playback_engine = None
         self.is_playing = False
         self.is_paused = False
         self.current_index = 0
@@ -1204,41 +740,12 @@ class FitAntPlaybackApp:
         self.current_power_var.set("---")
         self.current_cadence_var.set("---")
         self.power_value_label.configure(fg=self.ACCENT)
-        self._log("Playback stopped")
+        if log:
+            self._log("Playback stopped")
 
-    def _playback_loop(self):
-        """Main playback loop running in separate thread"""
-        start_time = time.time()
-        total_duration = self.fit_records[-1].timestamp if self.fit_records else 0
-
-        while self.is_playing and self.current_index < len(self.fit_records):
-            if self.is_paused:
-                time.sleep(0.1)
-                start_time = (time.time()
-                              - self.fit_records[self.current_index].timestamp
-                              / self.playback_speed)
-                continue
-
-            record = self.fit_records[self.current_index]
-            target_time = record.timestamp / self.playback_speed
-            elapsed = time.time() - start_time
-
-            if elapsed < target_time:
-                time.sleep(min(target_time - elapsed, 0.1))
-                continue
-
-            if self.broadcaster and self.broadcaster.running:
-                self.broadcaster.broadcast_power_cadence(record.power, record.cadence)
-
-            self.root.after(0, self._update_playback_ui, record, total_duration)
-            self.current_index += 1
-            time.sleep(0.01)
-
-        if self.is_playing:
-            self.root.after(0, self._playback_finished)
-
-    def _update_playback_ui(self, record: PowerCadenceRecord, total_duration: float):
+    def _update_playback_ui(self, record: PowerCadenceRecord, total_duration: float, index: int = 0):
         """Update UI during playback (called from main thread)"""
+        self.current_index = index
         self.current_power_var.set(str(record.power))
         self.current_cadence_var.set(str(record.cadence))
         self.power_value_label.configure(fg=self._color_for_power(record.power))
@@ -1262,7 +769,13 @@ class FitAntPlaybackApp:
     def _playback_finished(self):
         """Called when playback completes"""
         self._log("Playback finished")
-        self._stop()
+        self._stop(log=False)
+
+    def _playback_error(self, exc: Exception):
+        """Called when playback fails in the worker thread"""
+        self._log(f"Playback error: {exc}")
+        messagebox.showerror("Playback Error", str(exc))
+        self._stop(log=False)
 
     # ------------------------------------------------------------------
     # Manual Power methods
@@ -1292,6 +805,7 @@ class FitAntPlaybackApp:
         watts = int(float(value))
         self.power_entry.delete(0, tk.END)
         self.power_entry.insert(0, str(watts))
+        self._set_manual_state(power=watts)
 
     def _on_power_entry_change(self, event=None):
         """Entry box changed — update slider"""
@@ -1301,6 +815,7 @@ class FitAntPlaybackApp:
         try:
             watts = max(0, min(2000, int(txt)))
             self.manual_power_var.set(watts)
+            self._set_manual_state(power=watts)
         except ValueError:
             pass
 
@@ -1309,6 +824,7 @@ class FitAntPlaybackApp:
         rpm = int(float(value))
         self.cadence_entry.delete(0, tk.END)
         self.cadence_entry.insert(0, str(rpm))
+        self._set_manual_state(cadence=rpm)
 
     def _on_cadence_entry_change(self, event=None):
         """Entry box changed — update slider"""
@@ -1318,6 +834,7 @@ class FitAntPlaybackApp:
         try:
             rpm = max(0, min(200, int(txt)))
             self.manual_cadence_var.set(rpm)
+            self._set_manual_state(cadence=rpm)
         except ValueError:
             pass
 
@@ -1360,6 +877,18 @@ class FitAntPlaybackApp:
         self.manual_power_var.set(watts)
         self.power_entry.delete(0, tk.END)
         self.power_entry.insert(0, str(watts))
+        self._set_manual_state(power=watts)
+
+    def _set_manual_state(self, *, power: int | None = None, cadence: int | None = None):
+        with self._manual_lock:
+            if power is not None:
+                self._manual_power = max(0, min(2000, int(power)))
+            if cadence is not None:
+                self._manual_cadence = max(0, min(200, int(cadence)))
+
+    def _get_manual_state(self) -> tuple[int, int]:
+        with self._manual_lock:
+            return self._manual_power, self._manual_cadence
 
     def _start_manual(self):
         """Start manual power broadcast"""
@@ -1371,37 +900,45 @@ class FitAntPlaybackApp:
             messagebox.showwarning("Warning", "Please connect ANT+ first")
             return
 
+        self._on_power_entry_change()
+        self._on_cadence_entry_change()
         self.manual_broadcasting = True
         self.manual_start_btn.configure(state="disabled")
         self.manual_stop_btn.configure(state="normal")
-        self.manual_thread = threading.Thread(target=self._manual_broadcast_loop,
-                                              daemon=True)
-        self.manual_thread.start()
+        self.manual_engine = ManualBroadcastEngine(
+            get_values=self._get_manual_state,
+            broadcast=self._broadcast_manual_values,
+            on_update=lambda power, cadence: self.root.after(
+                0, self._update_manual_ui, power, cadence
+            ),
+            on_error=lambda exc: self.root.after(0, self._manual_error, exc),
+        )
+        self.manual_engine.start()
         self._log("Manual broadcast started")
 
-    def _stop_manual(self):
+    def _stop_manual(self, *, log: bool = True):
         """Stop manual power broadcast"""
+        if self.manual_engine:
+            self.manual_engine.stop()
+            self.manual_engine = None
         self.manual_broadcasting = False
         self.manual_start_btn.configure(state="normal")
         self.manual_stop_btn.configure(state="disabled")
         self.current_power_var.set("---")
         self.current_cadence_var.set("---")
         self.power_value_label.configure(fg=self.ACCENT)
-        self._log("Manual broadcast stopped")
+        if log:
+            self._log("Manual broadcast stopped")
 
-    def _manual_broadcast_loop(self):
-        """Broadcast manual power/cadence at ~4 Hz"""
-        while self.manual_broadcasting:
-            if not self.broadcaster or not self.broadcaster.running:
-                self.root.after(0, self._stop_manual)
-                self.root.after(0, self._log, "ANT+ disconnected — manual broadcast stopped")
-                break
+    def _broadcast_manual_values(self, power: int, cadence: int):
+        if not self.broadcaster or not self.broadcaster.running:
+            raise RuntimeError("ANT+ disconnected")
+        self.broadcaster.broadcast_power_cadence(power, cadence)
 
-            power = self.manual_power_var.get()
-            cadence = self.manual_cadence_var.get()
-            self.broadcaster.broadcast_power_cadence(power, cadence)
-            self.root.after(0, self._update_manual_ui, power, cadence)
-            time.sleep(0.25)  # ~4 Hz
+    def _manual_error(self, exc: Exception):
+        self._log(f"Manual broadcast error: {exc}")
+        messagebox.showerror("Manual Broadcast Error", str(exc))
+        self._stop_manual(log=False)
 
     def _update_manual_ui(self, power: int, cadence: int):
         """Update current-value display for manual mode"""
@@ -1417,31 +954,20 @@ class FitAntPlaybackApp:
         self.root.mainloop()
 
         # Cleanup on exit
-        self.manual_broadcasting = False
+        if self.playback_engine:
+            self.playback_engine.stop()
+        if self.manual_engine:
+            self.manual_engine.stop()
         if self.broadcaster:
             self.broadcaster.stop()
 
 
 def main():
     """Main entry point"""
-    # Check dependencies
-    if fitdecode is None:
-        print("Error: fitdecode library not installed")
-        print("Install with: pip install fitdecode")
-        
-        # Show GUI error
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror("Missing Dependency", 
-            "The 'fitdecode' library is required.\n\n"
-            "Install it with:\npip install fitdecode")
-        return
-    
-    if not ANT_AVAILABLE:
-        print("Warning: openant library not installed")
-        print("ANT+ features will not work")
-        print("Install with: pip install openant")
-    
+    if not fitdecode_available():
+        print("Warning: fitdecode library not installed")
+        print("FIT file loading will not work until you run: pip install fitdecode")
+
     app = FitAntPlaybackApp()
     app.run()
 

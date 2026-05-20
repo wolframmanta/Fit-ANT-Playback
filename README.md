@@ -15,6 +15,7 @@ This tool is designed for **legitimate testing and development purposes**, inclu
 
 ## Features
 
+- Version 0.2.0
 - Browse and load FIT files with power/cadence data
 - Broadcast data via ANT+ Bike Power profile (Device Type 0x0B)
 - Play, pause, and stop playback controls
@@ -31,12 +32,11 @@ This tool is designed for **legitimate testing and development purposes**, inclu
 
 ### Software Dependencies
 ```bash
-pip install fitdecode openant
+pip install fitdecode pyusb
 ```
 
 On macOS, you may also need:
 ```bash
-pip install pyusb
 brew install libusb
 ```
 
@@ -57,11 +57,21 @@ sudo udevadm control --reload-rules
    pip install -r requirements.txt
    ```
 
+   For editable development installs:
+   ```bash
+   pip install -e .
+   ```
+
 ## Usage
 
 1. Run the application (requires `sudo` for USB access to the ANT+ stick):
    ```bash
    sudo python fit_ant_playback.py
+   ```
+
+   If your operating system allows user-level USB access, you can run:
+   ```bash
+   python fit_ant_playback.py
    ```
 
 2. Click "Browse..." to select a FIT file containing power/cadence data
@@ -85,8 +95,35 @@ sudo udevadm control --reload-rules
 The tool broadcasts using the **ANT+ Bike Power Profile**:
 - Device Type: 0x0B (11)
 - Data Page: 0x10 (Standard Power-Only)
-- Channel Period: 8182 (~4.05 Hz)
+- Channel Period: 8182 (~4.00 Hz)
 - RF Frequency: 2457 MHz (ANT+ frequency)
+
+The USB backend uses PyUSB directly, validates ANT command responses during startup, and reports the specific command failure in the app log when the stick rejects a setup step.
+
+## Development
+
+The app is split into testable modules:
+- `fit_ant_playback.py` — Tk GUI and app wiring
+- `fit_ant_playback_core/fit_parser.py` — FIT parsing
+- `fit_ant_playback_core/ant_protocol.py` — ANT serial frames and Bike Power pages
+- `fit_ant_playback_core/ant_usb.py` — raw USB ANT+ broadcaster
+- `fit_ant_playback_core/playback_engine.py` — monotonic playback/manual broadcast scheduling
+
+Run the unit tests:
+```bash
+python -m unittest discover
+```
+
+## Release Notes
+
+### 0.2.0 - 2026-05-20
+
+- Split the single-file prototype into focused core modules for FIT parsing, ANT protocol framing, USB broadcasting, playback scheduling, and app models.
+- Replaced the old mixed `openant`/raw USB path with a PyUSB ANT+ backend that validates setup command responses.
+- Added ANT serial checksum parsing, Bike Power page generation, event count rollover, and accumulated power rollover tests.
+- Reworked FIT playback and manual broadcasting to use monotonic 4 Hz schedulers.
+- Kept Tk variable access on the UI thread for safer manual mode updates.
+- Added package metadata, a console entry point, and unit tests.
 
 ## Troubleshooting
 
