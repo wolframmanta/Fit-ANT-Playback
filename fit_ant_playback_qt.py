@@ -351,18 +351,50 @@ class KitHeading(QWidget):
         painter.drawLine(rect.left() + 18, rect.bottom() - 17, rect.right() - 18, rect.bottom() - 17)
 
         painter.setPen(QColor("#FFFFFF"))
-        title_rect = rect.adjusted(22, 5, -365, -28)
+        title_rect = QRectF(rect.left() + 22, rect.top() + 5, max(rect.width() - 387, 80), 54)
         title_font = QFont("Avenir Next", 29, QFont.Black)
-        while QFontMetrics(title_font).horizontalAdvance(DMRL_FULL_NAME.upper()) > title_rect.width() and title_font.pointSize() > 16:
+        title_text = DMRL_FULL_NAME.upper()
+        while QFontMetrics(title_font).horizontalAdvance(title_text) > title_rect.width() and title_font.pointSize() > 18:
             title_font.setPointSize(title_font.pointSize() - 1)
         painter.setFont(title_font)
-        painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, DMRL_FULL_NAME.upper())
+        stacked_title = False
+        if QFontMetrics(title_font).horizontalAdvance(title_text) <= title_rect.width():
+            painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, title_text)
+            sub_top = 54
+        else:
+            stacked_title = True
+            stacked_font = QFont("Avenir Next", 17, QFont.Black)
+            while (
+                max(
+                    QFontMetrics(stacked_font).horizontalAdvance("DIRTY MITTEN"),
+                    QFontMetrics(stacked_font).horizontalAdvance("RACING LEAGUE"),
+                )
+                > title_rect.width()
+                and stacked_font.pointSize() > 12
+            ):
+                stacked_font.setPointSize(stacked_font.pointSize() - 1)
+            painter.setFont(stacked_font)
+            painter.drawText(
+                QRectF(title_rect.left(), rect.top() + 5, title_rect.width(), 22),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                "DIRTY MITTEN",
+            )
+            painter.drawText(
+                QRectF(title_rect.left(), rect.top() + 27, title_rect.width(), 22),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                "RACING LEAGUE",
+            )
+            sub_top = 55
 
         painter.setPen(QColor(DMRL_YELLOW))
-        sub_font = QFont("Avenir Next", 10, QFont.Bold)
+        sub_font = QFont("Avenir Next", 8 if stacked_title else 10, QFont.Bold)
         sub_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.6)
         painter.setFont(sub_font)
-        painter.drawText(rect.adjusted(24, 54, -22, -10), Qt.AlignLeft | Qt.AlignVCenter, "VIRTUAL POWER LAB")
+        painter.drawText(
+            QRectF(rect.left() + 24, rect.top() + sub_top, title_rect.width(), 16 if stacked_title else 18),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            "VIRTUAL POWER LAB",
+        )
 
         painter.setPen(QColor(DMRL_BLACK))
         badge_font = QFont("Avenir Next", 15, QFont.Black)
