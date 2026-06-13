@@ -16,7 +16,10 @@ This tool is designed for **legitimate testing and development purposes**, inclu
 ## Features
 
 - Version 0.2.0
+- DMRL-branded PySide6 dashboard UI with a denser control-room layout, live metrics, ride preview chart, and shared playback controls
 - Browse and load FIT files with power/cadence data
+- Browse and load structured workout files (`.zwo`, `.erg`, `.mrc`, `.xml`, `.xert`) using configurable FTP for percent-based targets
+- Generate simulated ride profiles with course types, average power, NP-style target, weight, cadence, and variability controls
 - Broadcast data via ANT+ Bike Power profile (Device Type 0x0B)
 - Play, pause, and stop playback controls
 - Variable playback speed (0.5x - 4.0x)
@@ -32,8 +35,10 @@ This tool is designed for **legitimate testing and development purposes**, inclu
 
 ### Software Dependencies
 ```bash
-pip install fitdecode pyusb
+pip install fitdecode PySide6 pyusb
 ```
+
+The DMRL PySide6 dashboard was verified with Python 3.13 in this workspace. If Python 3.14 reports a Qt platform-plugin startup error, create the app venv with Python 3.13 for the Qt UI.
 
 On macOS, you may also need:
 ```bash
@@ -64,23 +69,46 @@ sudo udevadm control --reload-rules
 
 ## Usage
 
-1. Run the application (requires `sudo` for USB access to the ANT+ stick):
+1. Run the DMRL dashboard application (requires `sudo` for USB access to the ANT+ stick on some systems):
    ```bash
-   sudo python fit_ant_playback.py
+   sudo python fit_ant_playback_qt.py
    ```
 
    If your operating system allows user-level USB access, you can run:
    ```bash
+   python fit_ant_playback_qt.py
+   ```
+
+   After an editable install, you can also run:
+   ```bash
+   fit-ant-playback-qt
+   ```
+
+   The original Tk interface remains available:
+   ```bash
+   sudo python fit_ant_playback.py
+   ```
+
+   Or, without elevated USB access:
+   ```bash
    python fit_ant_playback.py
    ```
 
-2. Click "Browse..." to select a FIT file containing power/cadence data
+2. Click "Browse..." to select a FIT file containing power/cadence data or a structured workout file. Set FTP first for percent-based workout files.
 
 3. Click "Connect ANT+" to initialize the ANT+ USB stick
 
 4. Click "Play" to start broadcasting
 
 5. Pair the ANT+ power source in your application under test — it will appear as a Bike Power sensor
+
+### Ride Simulator Mode
+
+1. Switch to the **Ride Simulator** tab
+2. Choose a course type: steady TT, endurance ride, rolling course, hilly course, mountain climb, crit/race surges, or VO2 intervals
+3. Set duration, average power, target NP, rider weight, preferred cadence, and variability
+4. Click **Generate Ride**; the generated ride loads into the File Playback tab
+5. Click **Play** from File Playback after connecting ANT+
 
 ### Manual Power Mode
 
@@ -103,8 +131,11 @@ The USB backend uses PyUSB directly, validates ANT command responses during star
 ## Development
 
 The app is split into testable modules:
-- `fit_ant_playback.py` — Tk GUI and app wiring
+- `fit_ant_playback_qt.py` — DMRL-branded PySide6 dashboard UI and app wiring
+- `fit_ant_playback.py` — legacy Tk GUI and app wiring
 - `fit_ant_playback_core/fit_parser.py` — FIT parsing
+- `fit_ant_playback_core/workout_parser.py` — structured workout parsing
+- `fit_ant_playback_core/ride_simulator.py` — simulated ride generation
 - `fit_ant_playback_core/ant_protocol.py` — ANT serial frames and Bike Power pages
 - `fit_ant_playback_core/ant_usb.py` — raw USB ANT+ broadcaster
 - `fit_ant_playback_core/playback_engine.py` — monotonic playback/manual broadcast scheduling
@@ -113,6 +144,8 @@ Run the unit tests:
 ```bash
 python -m unittest discover
 ```
+
+See `docs/ROADMAP.md` for planned larger improvements and remaining simulator refinements.
 
 ## Release Notes
 
@@ -132,9 +165,10 @@ python -m unittest discover
 - Close any other applications using the ANT+ stick
 - On Linux/macOS, you may need elevated permissions
 
-### No Data in FIT File
+### No Data in File
 - Ensure your FIT file contains `record` messages with `power` and/or `cadence` fields
-- Files from bike computers, power meters, or smart trainers typically have this data
+- Ensure your workout file contains supported workout steps or course data
+- Files from bike computers, power meters, smart trainers, and common workout exporters typically have this data
 
 ### Device Not Detected
 - Make sure playback is running before searching for sensors in your application

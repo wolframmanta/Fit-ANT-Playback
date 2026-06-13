@@ -17,6 +17,14 @@ from fit_ant_playback_core.ant_usb import AntUsbBroadcaster
 from fit_ant_playback_core.fit_parser import FitFileParser, fitdecode_available
 from fit_ant_playback_core.models import PowerCadenceRecord
 from fit_ant_playback_core.playback_engine import FitPlaybackEngine, ManualBroadcastEngine
+from fit_ant_playback_core.ride_simulator import (
+    COURSE_TYPES,
+    VARIABILITY_LEVELS,
+    RideSimulationConfig,
+    RideSimulationError,
+    generate_ride,
+)
+from fit_ant_playback_core.workout_parser import WorkoutFileParser, is_workout_file
 
 
 class TkLogHandler(logging.Handler):
@@ -86,17 +94,30 @@ class FitAntPlaybackApp:
         self._manual_power = 300
         self._manual_cadence = 85
 
-        # FIT file info vars (set in _build_fit_tab)
+        # File info vars (set in _build_fit_tab)
+        self.input_type_var: tk.StringVar = tk.StringVar(value="-")
         self.records_var: tk.StringVar = tk.StringVar(value="0")
         self.duration_var: tk.StringVar = tk.StringVar(value="00:00:00")
         self.avg_power_var: tk.StringVar = tk.StringVar(value="0 W")
         self.avg_cadence_var: tk.StringVar = tk.StringVar(value="0 RPM")
+        self.ftp_var: tk.StringVar = tk.StringVar(value="250")
+        self.sim_course_var: tk.StringVar = tk.StringVar(value="Rolling Course")
+        self.sim_duration_var: tk.StringVar = tk.StringVar(value="45")
+        self.sim_avg_power_var: tk.StringVar = tk.StringVar(value="220")
+        self.sim_np_var: tk.StringVar = tk.StringVar(value="245")
+        self.sim_weight_var: tk.StringVar = tk.StringVar(value="75")
+        self.sim_cadence_var: tk.StringVar = tk.StringVar(value="88")
+        self.sim_variability_var: tk.StringVar = tk.StringVar(value="Moderate")
+        self.sim_summary_power_var: tk.StringVar = tk.StringVar(value="-")
+        self.sim_summary_np_var: tk.StringVar = tk.StringVar(value="-")
+        self.sim_summary_vi_var: tk.StringVar = tk.StringVar(value="-")
+        self.sim_summary_wkg_var: tk.StringVar = tk.StringVar(value="-")
 
         self._setup_styles()
         self._setup_ui()
         self._configure_logging()
         self._log("FIT ANT+ Playback ready")
-        self._log("Select a FIT file or switch to Manual Power mode")
+        self._log("Select a FIT/workout file or switch to Manual Power mode")
         if not fitdecode_available():
             self._log("WARNING: fitdecode is not installed; FIT file loading is disabled")
 
@@ -246,6 +267,7 @@ class FitAntPlaybackApp:
         self.notebook.grid(row=2, column=0, sticky="ew", pady=(0, 8))
 
         self._build_fit_tab()
+        self._build_simulator_tab()
         self._build_manual_tab()
 
         # ---- Current values ----
@@ -254,14 +276,14 @@ class FitAntPlaybackApp:
         # ---- Log ----
         self._build_log(outer, row=4)
 
-    # ---------- FIT Playback tab ----------
+    # ---------- File Playback tab ----------
     def _build_fit_tab(self):
         tab = ttk.Frame(self.notebook, style="Dark.TFrame", padding=10)
-        self.notebook.add(tab, text="  FIT File Playback  ")
+        self.notebook.add(tab, text="  File Playback  ")
         tab.columnconfigure(0, weight=1)
 
         # File selection
-        file_frame = ttk.LabelFrame(tab, text="FIT File", style="Dark.TLabelframe",
+        file_frame = ttk.LabelFrame(tab, text="Input File", style="Dark.TLabelframe",
                                     padding=8)
         file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         file_frame.columnconfigure(1, weight=1)
@@ -276,6 +298,14 @@ class FitAntPlaybackApp:
                                      command=self._browse_file, style="Secondary.TButton")
         self.browse_btn.grid(row=0, column=2)
 
+        vcmd_ftp = (self.root.register(self._validate_ftp_entry), "%P")
+        ttk.Label(file_frame, text="FTP:", style="Dim.TLabel"
+                  ).grid(row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0))
+        self.ftp_entry = ttk.Entry(file_frame, textvariable=self.ftp_var,
+                                   width=7, style="Dark.TEntry",
+                                   validate="key", validatecommand=vcmd_ftp)
+        self.ftp_entry.grid(row=1, column=1, sticky="w", pady=(8, 0))
+
         # File info
         info_frame = ttk.LabelFrame(tab, text="File Info", style="Dark.TLabelframe",
                                     padding=8)
@@ -284,6 +314,7 @@ class FitAntPlaybackApp:
             info_frame.columnconfigure(c, weight=1)
 
         for r, (lbl, sv) in enumerate([
+            ("Type:", self.input_type_var),
             ("Records:", self.records_var),
             ("Duration:", self.duration_var),
         ]):
@@ -347,6 +378,116 @@ class FitAntPlaybackApp:
                                    command=self._stop, style="Danger.TButton",
                                    width=10, state="disabled")
         self.stop_btn.grid(row=0, column=2, padx=4)
+
+    # ---------- Ride Simulator tab ----------
+    def _build_simulator_tab(self):
+        tab = ttk.Frame(self.notebook, style="Dark.TFrame", padding=10)
+        self.notebook.add(tab, text="  Ride Simulator  ")
+        tab.columnconfigure(0, weight=1)
+
+        profile_frame = ttk.LabelFrame(tab, text="Ride Profile",
+                                       style="Dark.TLabelframe", padding=10)
+        profile_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        for column in (1, 3, 5):
+            profile_frame.columnconfigure(column, weight=1)
+
+        ttk.Label(profile_frame, text="Course:", style="Card.TLabel"
+                  ).grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.sim_course_combo = ttk.Combobox(
+            profile_frame,
+            textvariable=self.sim_course_var,
+            values=list(COURSE_TYPES),
+            style="Dark.TCombobox",
+            state="readonly",
+            width=18,
+        )
+        self.sim_course_combo.grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=4)
+
+        ttk.Label(profile_frame, text="Duration:", style="Card.TLabel"
+                  ).grid(row=0, column=2, sticky="w", padx=(0, 8), pady=4)
+        vcmd_duration = (self.root.register(self._validate_duration_entry), "%P")
+        self.sim_duration_entry = ttk.Entry(profile_frame, textvariable=self.sim_duration_var,
+                                            width=7, style="Dark.TEntry",
+                                            validate="key", validatecommand=vcmd_duration)
+        self.sim_duration_entry.grid(row=0, column=3, sticky="w", padx=(0, 4), pady=4)
+        ttk.Label(profile_frame, text="min", style="Dim.TLabel"
+                  ).grid(row=0, column=4, sticky="w", padx=(0, 16), pady=4)
+
+        ttk.Label(profile_frame, text="Variability:", style="Card.TLabel"
+                  ).grid(row=0, column=5, sticky="w", padx=(0, 8), pady=4)
+        self.sim_variability_combo = ttk.Combobox(
+            profile_frame,
+            textvariable=self.sim_variability_var,
+            values=list(VARIABILITY_LEVELS.keys()),
+            style="Dark.TCombobox",
+            state="readonly",
+            width=12,
+        )
+        self.sim_variability_combo.grid(row=0, column=6, sticky="ew", pady=4)
+
+        ttk.Label(profile_frame, text="Avg Power:", style="Card.TLabel"
+                  ).grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        vcmd_power = (self.root.register(self._validate_power_entry), "%P")
+        self.sim_avg_power_entry = ttk.Entry(profile_frame, textvariable=self.sim_avg_power_var,
+                                             width=7, style="Dark.TEntry",
+                                             validate="key", validatecommand=vcmd_power)
+        self.sim_avg_power_entry.grid(row=1, column=1, sticky="w", padx=(0, 4), pady=4)
+        ttk.Label(profile_frame, text="W", style="Dim.TLabel"
+                  ).grid(row=1, column=1, sticky="w", padx=(58, 16), pady=4)
+
+        ttk.Label(profile_frame, text="Target NP:", style="Card.TLabel"
+                  ).grid(row=1, column=2, sticky="w", padx=(0, 8), pady=4)
+        self.sim_np_entry = ttk.Entry(profile_frame, textvariable=self.sim_np_var,
+                                      width=7, style="Dark.TEntry",
+                                      validate="key", validatecommand=vcmd_power)
+        self.sim_np_entry.grid(row=1, column=3, sticky="w", padx=(0, 4), pady=4)
+        ttk.Label(profile_frame, text="W", style="Dim.TLabel"
+                  ).grid(row=1, column=4, sticky="w", padx=(0, 16), pady=4)
+
+        ttk.Label(profile_frame, text="Weight:", style="Card.TLabel"
+                  ).grid(row=1, column=5, sticky="w", padx=(0, 8), pady=4)
+        vcmd_weight = (self.root.register(self._validate_weight_entry), "%P")
+        self.sim_weight_entry = ttk.Entry(profile_frame, textvariable=self.sim_weight_var,
+                                          width=7, style="Dark.TEntry",
+                                          validate="key", validatecommand=vcmd_weight)
+        self.sim_weight_entry.grid(row=1, column=6, sticky="w", padx=(0, 4), pady=4)
+        ttk.Label(profile_frame, text="kg", style="Dim.TLabel"
+                  ).grid(row=1, column=6, sticky="w", padx=(58, 0), pady=4)
+
+        ttk.Label(profile_frame, text="Cadence:", style="Card.TLabel"
+                  ).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        vcmd_cadence = (self.root.register(self._validate_cadence_entry), "%P")
+        self.sim_cadence_entry = ttk.Entry(profile_frame, textvariable=self.sim_cadence_var,
+                                           width=7, style="Dark.TEntry",
+                                           validate="key", validatecommand=vcmd_cadence)
+        self.sim_cadence_entry.grid(row=2, column=1, sticky="w", padx=(0, 4), pady=4)
+        ttk.Label(profile_frame, text="RPM", style="Dim.TLabel"
+                  ).grid(row=2, column=1, sticky="w", padx=(58, 16), pady=4)
+
+        ctrl_frame = ttk.Frame(profile_frame, style="Dark.TLabelframe")
+        ctrl_frame.grid(row=2, column=2, columnspan=5, sticky="e", pady=(8, 0))
+        self.sim_generate_btn = ttk.Button(ctrl_frame, text="Generate Ride",
+                                           command=self._generate_simulated_ride,
+                                           style="Success.TButton", width=18)
+        self.sim_generate_btn.grid(row=0, column=0, padx=(0, 6))
+
+        summary_frame = ttk.LabelFrame(tab, text="Generated Ride",
+                                       style="Dark.TLabelframe", padding=10)
+        summary_frame.grid(row=1, column=0, sticky="ew")
+        for column in (1, 3, 5, 7):
+            summary_frame.columnconfigure(column, weight=1)
+
+        for column, (label, variable) in enumerate([
+            ("Avg:", self.sim_summary_power_var),
+            ("NP:", self.sim_summary_np_var),
+            ("VI:", self.sim_summary_vi_var),
+            ("W/kg:", self.sim_summary_wkg_var),
+        ]):
+            label_column = column * 2
+            ttk.Label(summary_frame, text=label, style="Dim.TLabel"
+                      ).grid(row=0, column=label_column, sticky="w", padx=(0, 4))
+            ttk.Label(summary_frame, textvariable=variable, style="Card.TLabel"
+                      ).grid(row=0, column=label_column + 1, sticky="w", padx=(0, 16))
 
     # ---------- Manual Power tab ----------
     def _build_manual_tab(self):
@@ -558,54 +699,170 @@ class FitAntPlaybackApp:
         self.log_text.configure(state="disabled")
 
     # ------------------------------------------------------------------
-    # FIT File Playback methods
+    # Ride Simulator methods
+    # ------------------------------------------------------------------
+    def _generate_simulated_ride(self):
+        """Generate a simulated ride and load it for playback."""
+        if self.is_playing or self.is_paused:
+            messagebox.showwarning("Warning", "Stop playback before generating a new ride")
+            return
+
+        try:
+            config = RideSimulationConfig(
+                course_type=self.sim_course_var.get(),  # type: ignore[arg-type]
+                duration_minutes=self._float_setting(self.sim_duration_var, "Duration"),
+                average_power=self._int_setting(self.sim_avg_power_var, "Average power"),
+                normalized_power=self._int_setting(self.sim_np_var, "Target NP"),
+                weight_kg=self._float_setting(self.sim_weight_var, "Weight"),
+                preferred_cadence=self._int_setting(self.sim_cadence_var, "Cadence"),
+                variability=VARIABILITY_LEVELS[self.sim_variability_var.get()],
+            )
+            result = generate_ride(config)
+        except (KeyError, RideSimulationError, ValueError) as exc:
+            self._log(f"Simulation error: {exc}")
+            messagebox.showerror("Simulation Error", str(exc))
+            return
+
+        self.fit_records = result.records
+        self.file_path_var.set(f"Simulated ride: {config.course_type}")
+        self.input_type_var.set("Ride simulator")
+        self._update_file_info()
+        self._update_simulator_summary(result)
+        self.notebook.select(0)
+        self._log(
+            "Generated simulated ride: "
+            f"{config.course_type}, {config.duration_minutes:g} min, "
+            f"{result.average_power:.0f} W avg, {result.normalized_power:.0f} W NP"
+        )
+
+    def _update_simulator_summary(self, result):
+        self.sim_summary_power_var.set(f"{result.average_power:.0f} W")
+        self.sim_summary_np_var.set(f"{result.normalized_power:.0f} W")
+        self.sim_summary_vi_var.set(f"{result.variability_index:.2f}")
+        self.sim_summary_wkg_var.set(f"{result.watts_per_kg:.2f}")
+
+    def _reset_simulator_summary(self):
+        self.sim_summary_power_var.set("-")
+        self.sim_summary_np_var.set("-")
+        self.sim_summary_vi_var.set("-")
+        self.sim_summary_wkg_var.set("-")
+
+    @staticmethod
+    def _validate_duration_entry(value: str) -> bool:
+        if value == "":
+            return True
+        try:
+            duration = float(value)
+            return 0 < duration <= 600
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _int_setting(variable: tk.StringVar, label: str) -> int:
+        value = variable.get().strip()
+        if not value:
+            raise ValueError(f"{label} is required")
+        return int(value)
+
+    @staticmethod
+    def _float_setting(variable: tk.StringVar, label: str) -> float:
+        value = variable.get().strip()
+        if not value:
+            raise ValueError(f"{label} is required")
+        return float(value)
+
+    # ------------------------------------------------------------------
+    # File Playback methods
     # ------------------------------------------------------------------
     def _browse_file(self):
-        """Open file browser to select FIT file"""
+        """Open file browser to select an activity or workout file."""
         filepath = filedialog.askopenfilename(
-            title="Select FIT File",
-            filetypes=[("FIT files", "*.fit"), ("All files", "*.*")]
+            title="Select Activity or Workout File",
+            filetypes=[
+                ("Supported files", "*.fit *.zwo *.erg *.mrc *.xml *.xert"),
+                ("FIT activity files", "*.fit"),
+                ("Workout files", "*.zwo *.erg *.mrc *.xml *.xert"),
+                ("All files", "*.*"),
+            ],
         )
         if filepath:
             self.file_path_var.set(filepath)
-            self._load_fit_file(filepath)
+            self._load_input_file(filepath)
 
-    def _load_fit_file(self, filepath: str):
-        """Load and parse FIT file"""
+    def _load_input_file(self, filepath: str):
+        """Load and parse an activity or workout file."""
         try:
-            parser = FitFileParser()
-            self.fit_records = parser.parse(filepath)
+            path = Path(filepath)
+            self.fit_records = []
+            self.input_type_var.set("-")
+            self._reset_simulator_summary()
+            self._update_file_info()
+
+            if path.suffix.lower() == ".fit":
+                parser = FitFileParser()
+                self.fit_records = parser.parse(filepath)
+                input_type = "FIT activity"
+            elif is_workout_file(path):
+                parser = WorkoutFileParser(ftp=self._current_ftp())
+                result = parser.parse(filepath)
+                self.fit_records = result.records
+                input_type = result.format_name
+            else:
+                raise ValueError(f"Unsupported file type: {path.suffix or '(none)'}")
 
             if not self.fit_records:
                 self._log("No power/cadence data found in file")
                 messagebox.showwarning("Warning",
-                                       "No power or cadence data found in the FIT file")
+                                       "No power or cadence data found in the selected file")
                 return
 
-            self.records_var.set(str(len(self.fit_records)))
+            self.input_type_var.set(input_type)
+            self._update_file_info()
+            self._log(f"Loaded {len(self.fit_records)} records from {path.name} ({input_type})")
 
-            if self.fit_records:
-                duration_secs = self.fit_records[-1].timestamp
-                hours = int(duration_secs // 3600)
-                minutes = int((duration_secs % 3600) // 60)
-                seconds = int(duration_secs % 60)
-                self.duration_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+        except ImportError as exc:
+            self._log(f"Error: {exc}")
+            messagebox.showerror("Error", str(exc))
+        except Exception as exc:
+            self._log(f"Error loading file: {exc}")
+            messagebox.showerror("Error", f"Failed to load file: {exc}")
 
-                powers = [r.power for r in self.fit_records if r.power > 0]
-                cadences = [r.cadence for r in self.fit_records if r.cadence > 0]
-                avg_power = sum(powers) / len(powers) if powers else 0
-                avg_cadence = sum(cadences) / len(cadences) if cadences else 0
-                self.avg_power_var.set(f"{avg_power:.0f} W")
-                self.avg_cadence_var.set(f"{avg_cadence:.0f} RPM")
+    def _update_file_info(self):
+        self.records_var.set(str(len(self.fit_records)))
+        if not self.fit_records:
+            self.duration_var.set("00:00:00")
+            self.avg_power_var.set("0 W")
+            self.avg_cadence_var.set("0 RPM")
+            return
 
-            self._log(f"Loaded {len(self.fit_records)} records from {Path(filepath).name}")
+        duration_secs = self.fit_records[-1].timestamp
+        hours = int(duration_secs // 3600)
+        minutes = int((duration_secs % 3600) // 60)
+        seconds = int(duration_secs % 60)
+        self.duration_var.set(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
 
-        except ImportError as e:
-            self._log(f"Error: {e}")
-            messagebox.showerror("Error", str(e))
-        except Exception as e:
-            self._log(f"Error loading file: {e}")
-            messagebox.showerror("Error", f"Failed to load FIT file: {e}")
+        powers = [record.power for record in self.fit_records if record.power > 0]
+        cadences = [record.cadence for record in self.fit_records if record.cadence > 0]
+        avg_power = sum(powers) / len(powers) if powers else 0
+        avg_cadence = sum(cadences) / len(cadences) if cadences else 0
+        self.avg_power_var.set(f"{avg_power:.0f} W")
+        self.avg_cadence_var.set(f"{avg_cadence:.0f} RPM")
+
+    @staticmethod
+    def _validate_ftp_entry(value: str) -> bool:
+        if value == "":
+            return True
+        try:
+            ftp = int(value)
+            return 1 <= ftp <= 2000
+        except ValueError:
+            return False
+
+    def _current_ftp(self) -> int:
+        try:
+            return max(1, min(2000, int(self.ftp_var.get())))
+        except ValueError:
+            return 250
 
     def _connect_ant(self):
         """Connect to ANT+ USB stick"""
@@ -673,10 +930,10 @@ class FitAntPlaybackApp:
         """Start or resume playback"""
         if self.manual_broadcasting:
             messagebox.showwarning("Warning",
-                                   "Stop manual broadcasting before playing a FIT file")
+                                   "Stop manual broadcasting before file playback")
             return
         if not self.fit_records:
-            messagebox.showwarning("Warning", "Please load a FIT file first")
+            messagebox.showwarning("Warning", "Please load a file or generate a ride first")
             return
         if not self.broadcaster or not self.broadcaster.running:
             messagebox.showwarning("Warning", "Please connect ANT+ first")
@@ -707,6 +964,8 @@ class FitAntPlaybackApp:
         self.pause_btn.configure(state="normal")
         self.stop_btn.configure(state="normal")
         self.browse_btn.configure(state="disabled")
+        self.ftp_entry.configure(state="disabled")
+        self.sim_generate_btn.configure(state="disabled")
 
     def _broadcast_playback_record(self, record: PowerCadenceRecord):
         if not self.broadcaster or not self.broadcaster.running:
@@ -735,6 +994,8 @@ class FitAntPlaybackApp:
         self.pause_btn.configure(state="disabled")
         self.stop_btn.configure(state="disabled")
         self.browse_btn.configure(state="normal")
+        self.ftp_entry.configure(state="normal")
+        self.sim_generate_btn.configure(state="normal")
 
         self.progress_var.set(0)
         self.current_power_var.set("---")
@@ -894,7 +1155,7 @@ class FitAntPlaybackApp:
         """Start manual power broadcast"""
         if self.is_playing:
             messagebox.showwarning("Warning",
-                                   "Stop FIT playback before starting manual mode")
+                                   "Stop file playback before starting manual mode")
             return
         if not self.broadcaster or not self.broadcaster.running:
             messagebox.showwarning("Warning", "Please connect ANT+ first")
