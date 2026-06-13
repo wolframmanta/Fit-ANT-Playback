@@ -20,13 +20,14 @@ The DMRL dashboard displays this testing-and-diagnostics disclaimer at startup. 
 
 ## Current Release
 
-- Version 1.2.1
+- Version 1.2.2
 - macOS-only packaged application: `DMRL Virtual Power Lab.app`
 - The legacy Python/Tk interface remains in source for development and fallback testing, but public distribution is now the macOS Dirty Mitten Racing League dashboard build.
 
 ## Features
 
 - DMRL-branded PySide6 dashboard UI with a denser control-room layout, live metrics, ride preview chart, and shared playback controls
+- In-app How To page for basic setup, input selection, broadcasting, pairing, and safe-use reminders
 - Browse and load FIT files with power/cadence data
 - Browse and load structured workout files (`.zwo`, `.erg`, `.mrc`, `.xml`, `.xert`) using configurable FTP for percent-based targets
 - Generate simulated ride profiles with course types, average power, NP-style target, weight, cadence, and variability controls
@@ -152,6 +153,11 @@ python -m unittest discover
 See `docs/ROADMAP.md` for planned larger improvements and remaining simulator refinements.
 
 ## Release Notes
+
+### 1.2.2 - 2026-06-13
+
+- Updated the sidebar brand treatment so it mirrors the main DMRL red/yellow/red diagonal stripe.
+- Added an in-app How To page for the basic operating workflow and testing-only reminder.
 
 ### 1.2.1 - 2026-06-13
 

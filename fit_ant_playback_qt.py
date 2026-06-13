@@ -77,6 +77,52 @@ LEGAL_DISCLAIMER_DETAIL = (
 )
 
 
+def _paint_slanted_band(
+    painter: QPainter,
+    rect: QRectF,
+    color: QColor,
+    top_left: float,
+    top_right: float,
+    slope: float,
+) -> None:
+    band = QPainterPath()
+    band.moveTo(top_left, rect.top())
+    band.lineTo(top_right, rect.top())
+    band.lineTo(top_right - slope, rect.bottom())
+    band.lineTo(top_left - slope, rect.bottom())
+    band.closeSubpath()
+    painter.fillPath(band, color)
+
+
+def _paint_dmrl_stripe(
+    painter: QPainter,
+    rect: QRectF,
+    red_left: float,
+    red_right: float,
+    yellow_left: float,
+    yellow_right: float,
+    slope: float,
+) -> None:
+    _paint_slanted_band(painter, rect, QColor(DMRL_RED), red_left, red_right, slope)
+    _paint_slanted_band(painter, rect, QColor(DMRL_YELLOW), yellow_left, yellow_right, slope)
+
+
+def _paint_dmrl_kit_stripe(
+    painter: QPainter,
+    rect: QRectF,
+    *,
+    min_red_width: float = 0.0,
+    min_yellow_width: float = 0.0,
+) -> None:
+    red_width = max(rect.width() * 0.325, min_red_width)
+    red_right = rect.right()
+    red_left = red_right - red_width
+    yellow_width = max(red_width * 0.146, min_yellow_width)
+    yellow_left = red_left + red_width * 0.454
+    yellow_right = yellow_left + yellow_width
+    _paint_dmrl_stripe(painter, rect, red_left, red_right, yellow_left, yellow_right, rect.height())
+
+
 def resource_path(*parts: str) -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base.joinpath(*parts)
@@ -224,24 +270,55 @@ class DmrlMark(QWidget):
         painter.setBrush(QColor(DMRL_BLUE))
         painter.drawRoundedRect(rect, 8, 8)
 
-        bands = (
-            (QColor(DMRL_RED), 106, 130, 78, 102),
-            (QColor(DMRL_YELLOW), 135, 150, 107, 122),
-            (QColor(DMRL_RED), 156, 180, 128, 152),
+        painter.save()
+        painter.setClipRect(QRectF(rect.right() - 74, rect.top(), 74, rect.height()))
+        _paint_dmrl_stripe(
+            painter,
+            QRectF(rect),
+            rect.right() - 51,
+            rect.right() + 45,
+            rect.right() - 18,
+            rect.right() - 2,
+            rect.height(),
         )
-        for color, top_left, top_right, bottom_left, bottom_right in bands:
-            band = QPainterPath()
-            band.moveTo(rect.left() + top_left, rect.top())
-            band.lineTo(rect.left() + top_right, rect.top())
-            band.lineTo(rect.left() + bottom_right, rect.bottom())
-            band.lineTo(rect.left() + bottom_left, rect.bottom())
-            band.closeSubpath()
-        painter.fillPath(band, color)
+        painter.restore()
 
         painter.setPen(QColor(INK))
         font = QFont("Avenir Next", 23, QFont.Black)
+        text_rect = rect.adjusted(14, 0, -83, 0)
+        while QFontMetrics(font).horizontalAdvance("DMRL") > text_rect.width() and font.pointSize() > 18:
+            font.setPointSize(font.pointSize() - 1)
         painter.setFont(font)
-        painter.drawText(rect.adjusted(14, 0, -54, 0), Qt.AlignLeft | Qt.AlignVCenter, "DMRL")
+        painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, "DMRL")
+        painter.end()
+
+
+class DmrlSidebarStripe(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFixedHeight(58)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+
+        painter.setPen(QPen(QColor("#152640"), 1))
+        painter.setBrush(QColor(DMRL_BLUE))
+        painter.drawRoundedRect(rect, 6, 6)
+
+        lower = QPainterPath()
+        lower.moveTo(rect.left(), rect.center().y() + 8)
+        lower.lineTo(rect.right(), rect.center().y() - 10)
+        lower.lineTo(rect.right(), rect.bottom())
+        lower.lineTo(rect.left(), rect.bottom())
+        lower.closeSubpath()
+        painter.fillPath(lower, QColor(DMRL_BLACK))
+
+        _paint_dmrl_kit_stripe(painter, rect, min_red_width=64, min_yellow_width=14)
+        painter.setPen(QPen(QColor(DMRL_YELLOW), 1.5))
+        painter.drawLine(rect.left() + 7, rect.bottom() - 10, rect.right() - 7, rect.bottom() - 10)
         painter.end()
 
 
@@ -268,29 +345,15 @@ class KitHeading(QWidget):
         lower.closeSubpath()
         painter.fillPath(lower, QColor(DMRL_BLACK))
 
-        red_band = QPainterPath()
-        red_band.moveTo(rect.right() - 260, rect.top())
-        red_band.lineTo(rect.right(), rect.top())
-        red_band.lineTo(rect.right() - 88, rect.bottom())
-        red_band.lineTo(rect.right() - 352, rect.bottom())
-        red_band.closeSubpath()
-        painter.fillPath(red_band, QColor(DMRL_RED))
-
-        yellow_band = QPainterPath()
-        yellow_band.moveTo(rect.right() - 142, rect.top())
-        yellow_band.lineTo(rect.right() - 104, rect.top())
-        yellow_band.lineTo(rect.right() - 198, rect.bottom())
-        yellow_band.lineTo(rect.right() - 236, rect.bottom())
-        yellow_band.closeSubpath()
-        painter.fillPath(yellow_band, QColor(DMRL_YELLOW))
+        _paint_dmrl_kit_stripe(painter, QRectF(rect))
 
         painter.setPen(QPen(QColor(DMRL_YELLOW), 2))
         painter.drawLine(rect.left() + 18, rect.bottom() - 17, rect.right() - 18, rect.bottom() - 17)
 
         painter.setPen(QColor("#FFFFFF"))
-        title_rect = rect.adjusted(22, 5, -250, -28)
+        title_rect = rect.adjusted(22, 5, -365, -28)
         title_font = QFont("Avenir Next", 29, QFont.Black)
-        while QFontMetrics(title_font).horizontalAdvance(DMRL_FULL_NAME.upper()) > title_rect.width() and title_font.pointSize() > 20:
+        while QFontMetrics(title_font).horizontalAdvance(DMRL_FULL_NAME.upper()) > title_rect.width() and title_font.pointSize() > 16:
             title_font.setPointSize(title_font.pointSize() - 1)
         painter.setFont(title_font)
         painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, DMRL_FULL_NAME.upper())
@@ -384,6 +447,7 @@ class DmrlQtApp(QMainWindow):
         self.pages.addWidget(self._build_simulator_page())
         self.pages.addWidget(self._build_manual_page())
         self.pages.addWidget(self._build_logs_page())
+        self.pages.addWidget(self._build_how_to_page())
         self.pages.addWidget(self._build_about_page())
         main_layout.addWidget(self.pages, 0)
 
@@ -403,10 +467,13 @@ class DmrlQtApp(QMainWindow):
         tool_name = QLabel("Virtual Power Lab")
         tool_name.setObjectName("navFooter")
         layout.addWidget(tool_name)
-        layout.addSpacing(18)
+        layout.addWidget(DmrlSidebarStripe())
+        layout.addSpacing(12)
 
         self.nav_buttons: list[QPushButton] = []
-        for index, label in enumerate(("File Playback", "Ride Simulator", "Manual Power", "Device & Logs", "About")):
+        for index, label in enumerate(
+            ("File Playback", "Ride Simulator", "Manual Power", "Device & Logs", "How To", "About")
+        ):
             button = QPushButton(label)
             button.setObjectName("navButton")
             button.setCheckable(True)
@@ -637,6 +704,56 @@ class DmrlQtApp(QMainWindow):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         layout.addWidget(self.log_text, 1)
+        return page
+
+    def _build_how_to_page(self) -> QWidget:
+        page = self._page_frame("How To")
+        layout = QGridLayout(page)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setHorizontalSpacing(22)
+        layout.setVerticalSpacing(12)
+
+        steps = (
+            (
+                "1. Connect ANT+",
+                "Plug in the ANT+ USB stick, close other apps using it, then click Connect ANT+.",
+            ),
+            (
+                "2. Pick an input",
+                "Load a FIT/workout file, generate a ride simulation, or use Manual Power for fixed values.",
+            ),
+            (
+                "3. Start output",
+                "For files and generated rides, use Play. For fixed values, use Start Manual Broadcast.",
+            ),
+            (
+                "4. Pair the sensor",
+                "In Zwift or the app under test, search under ANT+ Power Source after output has started.",
+            ),
+            (
+                "5. Stop cleanly",
+                "Stop playback or manual broadcast before switching modes, then disconnect ANT+ when finished.",
+            ),
+            (
+                "6. Stay in bounds",
+                "Use this for testing, diagnostics, demos, and validation only. Do not use it for cheating.",
+            ),
+        )
+        for index, (heading, body) in enumerate(steps):
+            row = index // 2
+            col = (index % 2) * 2
+            heading_label = QLabel(heading)
+            heading_label.setObjectName("guideHeading")
+            body_label = QLabel(body)
+            body_label.setObjectName("guideText")
+            body_label.setWordWrap(True)
+            layout.addWidget(heading_label, row * 2, col)
+            layout.addWidget(body_label, row * 2 + 1, col)
+            layout.setColumnStretch(col, 1)
+            if col == 0:
+                layout.setColumnMinimumWidth(1, 12)
+
+        layout.setRowStretch(6, 1)
         return page
 
     def _build_about_page(self) -> QWidget:
@@ -1046,6 +1163,17 @@ class DmrlQtApp(QMainWindow):
             }}
             #aboutText a {{
                 color: {DMRL_YELLOW};
+            }}
+            #guideHeading {{
+                color: {DMRL_YELLOW};
+                font-size: 15px;
+                font-weight: 900;
+            }}
+            #guideText {{
+                color: {MUTED};
+                font-size: 13px;
+                font-weight: 650;
+                line-height: 1.35;
             }}
             #navFooter {{
                 color: {MUTED};
