@@ -1,6 +1,9 @@
-# FIT ANT+ Playback Tool
+# DMRL Virtual Power Lab
 
-A **development and testing utility** that broadcasts power and cadence data via ANT+ USB dongle. Built for developers, testers, and equipment manufacturers who need to simulate ANT+ power meter signals without requiring actual cycling hardware.
+A **Dirty Mitten Racing League** development and testing utility that broadcasts power and cadence data via ANT+ USB dongle. Built for developers, testers, and equipment manufacturers who need to simulate ANT+ power meter signals without requiring actual cycling hardware.
+
+- Dirty Mitten Racing League: <https://www.dirtymittenracing.com>
+- Created by The.Colonel: <https://lonewolfracing.cc>
 
 ## Intended Use
 
@@ -13,9 +16,16 @@ This tool is designed for **legitimate testing and development purposes**, inclu
 
 **This tool is NOT intended for cheating, falsifying results, or gaining unfair advantages in competitive platforms like Zwift, TrainerRoad, or any other online racing or training service.** Use responsibly and in accordance with the terms of service of any platform you connect to.
 
+The DMRL dashboard displays this testing-and-diagnostics disclaimer at startup. The warning is intentional and should remain visible in packaged builds.
+
+## Current Release
+
+- Version 1.2.0
+- macOS-only packaged application: `DMRL Virtual Power Lab.app`
+- The legacy Python/Tk interface remains in source for development and fallback testing, but public distribution is now the macOS Dirty Mitten Racing League dashboard build.
+
 ## Features
 
-- Version 0.2.0
 - DMRL-branded PySide6 dashboard UI with a denser control-room layout, live metrics, ride preview chart, and shared playback controls
 - Browse and load FIT files with power/cadence data
 - Browse and load structured workout files (`.zwo`, `.erg`, `.mrc`, `.xml`, `.xert`) using configurable FTP for percent-based targets
@@ -30,6 +40,8 @@ This tool is designed for **legitimate testing and development purposes**, inclu
 
 ## Requirements
 
+The current packaged release is macOS only.
+
 ### Hardware
 - ANT+ USB stick (Dynastream/Garmin)
 
@@ -43,14 +55,6 @@ The DMRL PySide6 dashboard was verified with Python 3.13 in this workspace. If P
 On macOS, you may also need:
 ```bash
 brew install libusb
-```
-
-On Linux, you may need to set up udev rules for ANT+ stick access:
-```bash
-sudo tee /etc/udev/rules.d/99-ant.rules << EOF
-SUBSYSTEM=="usb", ATTR{idVendor}=="0fcf", MODE="0666"
-EOF
-sudo udevadm control --reload-rules
 ```
 
 ## Installation
@@ -69,7 +73,7 @@ sudo udevadm control --reload-rules
 
 ## Usage
 
-1. Run the DMRL dashboard application (requires `sudo` for USB access to the ANT+ stick on some systems):
+1. Run the DMRL dashboard application on macOS (requires `sudo` for USB access to the ANT+ stick on some systems):
    ```bash
    sudo python fit_ant_playback_qt.py
    ```
@@ -84,7 +88,7 @@ sudo udevadm control --reload-rules
    fit-ant-playback-qt
    ```
 
-   The original Tk interface remains available:
+   The original Tk interface remains available from source for development/fallback use:
    ```bash
    sudo python fit_ant_playback.py
    ```
@@ -149,6 +153,14 @@ See `docs/ROADMAP.md` for planned larger improvements and remaining simulator re
 
 ## Release Notes
 
+### 1.2.0 - 2026-06-13
+
+- Made the DMRL Virtual Power Lab macOS dashboard the public packaged release.
+- Added the DMRL-branded PySide6 dashboard, app icon, and macOS `.app` packaging.
+- Added startup legal disclaimer for testing/diagnostics-only use.
+- Added structured workout file playback for ZWO, ERG, MRC, XML, and XERT-style files.
+- Added realistic ride simulation controls for course type, average power, target NP, weight, cadence, and variability.
+
 ### 0.2.0 - 2026-05-20
 
 - Split the single-file prototype into focused core modules for FIT parsing, ANT protocol framing, USB broadcasting, playback scheduling, and app models.
@@ -163,7 +175,7 @@ See `docs/ROADMAP.md` for planned larger improvements and remaining simulator re
 ### ANT+ Won't Connect
 - Ensure the ANT+ USB stick is plugged in
 - Close any other applications using the ANT+ stick
-- On Linux/macOS, you may need elevated permissions
+- On macOS, you may need elevated permissions
 
 ### No Data in File
 - Ensure your FIT file contains `record` messages with `power` and/or `cadence` fields

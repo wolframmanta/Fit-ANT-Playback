@@ -8,8 +8,8 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -57,6 +57,23 @@ PANEL_ALT = "#0A1E3D"
 BORDER = "#1D3358"
 GOOD = "#42D66D"
 WARN = "#FFB700"
+DMRL_FULL_NAME = "Dirty Mitten Racing League"
+DMRL_WEBSITE = "https://www.dirtymittenracing.com"
+CREATOR_NAME = "The.Colonel"
+CREATOR_WEBSITE = "https://lonewolfracing.cc"
+LEGAL_DISCLAIMER_TITLE = "Testing and Diagnostics Only"
+LEGAL_DISCLAIMER_TEXT = (
+    "DMRL Virtual Power Lab is intended for controlled testing, diagnostics, "
+    "development, demos, and equipment validation."
+)
+LEGAL_DISCLAIMER_DETAIL = (
+    "Do not use this tool to cheat, falsify ride data, evade platform rules, "
+    "or gain an unfair advantage in Zwift, TrainerRoad, Xert, or any other "
+    "online racing, e-sports, training, leaderboard, ranking, achievement, "
+    "or competition system.\n\n"
+    "Only connect this tool to systems you are authorized to test, and follow "
+    "the terms, event rules, and sporting standards that apply to those systems."
+)
 
 
 def resource_path(*parts: str) -> Path:
@@ -231,7 +248,7 @@ class DmrlMark(QWidget):
         small = QFont("Avenir Next", 6, QFont.Bold)
         small.setLetterSpacing(QFont.AbsoluteSpacing, 0.4)
         painter.setFont(small)
-        painter.drawText(rect.adjusted(15, 42, -54, -8), Qt.AlignLeft | Qt.AlignVCenter, "DIRTY MITTEN")
+        painter.drawText(rect.adjusted(15, 42, -48, -8), Qt.AlignLeft | Qt.AlignVCenter, "RACING LEAGUE")
         painter.end()
 
 
@@ -278,9 +295,12 @@ class KitHeading(QWidget):
         painter.drawLine(rect.left() + 18, rect.bottom() - 17, rect.right() - 18, rect.bottom() - 17)
 
         painter.setPen(QColor("#FFFFFF"))
+        title_rect = rect.adjusted(22, 5, -250, -28)
         title_font = QFont("Avenir Next", 29, QFont.Black)
+        while QFontMetrics(title_font).horizontalAdvance(DMRL_FULL_NAME.upper()) > title_rect.width() and title_font.pointSize() > 20:
+            title_font.setPointSize(title_font.pointSize() - 1)
         painter.setFont(title_font)
-        painter.drawText(rect.adjusted(22, 5, -250, -28), Qt.AlignLeft | Qt.AlignVCenter, "DIRTY MITTEN RACING")
+        painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, DMRL_FULL_NAME.upper())
 
         painter.setPen(QColor(DMRL_YELLOW))
         sub_font = QFont("Avenir Next", 10, QFont.Bold)
@@ -371,6 +391,7 @@ class DmrlQtApp(QMainWindow):
         self.pages.addWidget(self._build_simulator_page())
         self.pages.addWidget(self._build_manual_page())
         self.pages.addWidget(self._build_logs_page())
+        self.pages.addWidget(self._build_about_page())
         main_layout.addWidget(self.pages, 0)
 
     def _build_nav(self) -> QWidget:
@@ -382,14 +403,17 @@ class DmrlQtApp(QMainWindow):
         layout.setSpacing(12)
 
         brand = DmrlMark()
-        subtitle = QLabel("Virtual Power Lab")
+        subtitle = QLabel(DMRL_FULL_NAME)
         subtitle.setObjectName("brandSub")
         layout.addWidget(brand)
         layout.addWidget(subtitle)
+        tool_name = QLabel("Virtual Power Lab")
+        tool_name.setObjectName("navFooter")
+        layout.addWidget(tool_name)
         layout.addSpacing(18)
 
         self.nav_buttons: list[QPushButton] = []
-        for index, label in enumerate(("File Playback", "Ride Simulator", "Manual Power", "Device & Logs")):
+        for index, label in enumerate(("File Playback", "Ride Simulator", "Manual Power", "Device & Logs", "About")):
             button = QPushButton(label)
             button.setObjectName("navButton")
             button.setCheckable(True)
@@ -620,6 +644,38 @@ class DmrlQtApp(QMainWindow):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         layout.addWidget(self.log_text, 1)
+        return page
+
+    def _build_about_page(self) -> QWidget:
+        page = self._page_frame("About")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        title = QLabel("DMRL Virtual Power Lab")
+        title.setObjectName("aboutTitle")
+        layout.addWidget(title)
+
+        about = QLabel(
+            f"{DMRL_FULL_NAME}<br>"
+            f"Created by {CREATOR_NAME}<br><br>"
+            f'<a href="{DMRL_WEBSITE}">{DMRL_WEBSITE}</a><br>'
+            f'<a href="{CREATOR_WEBSITE}">{CREATOR_WEBSITE}</a>'
+        )
+        about.setObjectName("aboutText")
+        about.setOpenExternalLinks(True)
+        about.setTextFormat(Qt.RichText)
+        layout.addWidget(about)
+
+        disclaimer = QLabel(
+            "Testing and diagnostics only. Do not use this tool to cheat, falsify ride data, "
+            "or gain an unfair advantage in online racing, e-sports, training, leaderboard, "
+            "ranking, achievement, or competition systems."
+        )
+        disclaimer.setObjectName("summaryText")
+        disclaimer.setWordWrap(True)
+        layout.addWidget(disclaimer)
+        layout.addStretch(1)
         return page
 
     def _page_frame(self, title: str) -> QFrame:
@@ -984,6 +1040,20 @@ class DmrlQtApp(QMainWindow):
                 font-weight: 800;
                 text-transform: uppercase;
             }}
+            #aboutTitle {{
+                color: {DMRL_YELLOW};
+                font-size: 24px;
+                font-weight: 900;
+            }}
+            #aboutText {{
+                color: {INK};
+                font-size: 14px;
+                font-weight: 700;
+                line-height: 1.45;
+            }}
+            #aboutText a {{
+                color: {DMRL_YELLOW};
+            }}
             #navFooter {{
                 color: {MUTED};
                 font-size: 12px;
@@ -1121,6 +1191,17 @@ class DmrlQtApp(QMainWindow):
             """
         )
 
+    def show_legal_disclaimer(self) -> None:
+        message = QMessageBox(self)
+        message.setWindowTitle(LEGAL_DISCLAIMER_TITLE)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setText(LEGAL_DISCLAIMER_TEXT)
+        message.setInformativeText(LEGAL_DISCLAIMER_DETAIL)
+        message.setStandardButtons(QMessageBox.StandardButton.Ok)
+        message.setDefaultButton(QMessageBox.StandardButton.Ok)
+        message.exec()
+        self._append_log("Startup disclaimer acknowledged")
+
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
         self._stop(log=False)
         self._stop_manual(log=False)
@@ -1137,6 +1218,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     window = DmrlQtApp()
     window.show()
+    QTimer.singleShot(250, window.show_legal_disclaimer)
     sys.exit(app.exec())
 
 
