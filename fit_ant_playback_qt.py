@@ -58,6 +58,7 @@ BORDER = "#1D3358"
 GOOD = "#42D66D"
 WARN = "#FFB700"
 DMRL_FULL_NAME = "Dirty Mitten Racing League"
+DMRL_SHORT_NAME = "Dirty Mitten"
 DMRL_WEBSITE = "https://www.dirtymittenracing.com"
 CREATOR_NAME = "The.Colonel"
 CREATOR_WEBSITE = "https://lonewolfracing.cc"
@@ -212,7 +213,7 @@ class TimelineWidget(QWidget):
 class DmrlMark(QWidget):
     def __init__(self) -> None:
         super().__init__()
-        self.setFixedSize(178, 70)
+        self.setFixedSize(178, 66)
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt API
         painter = QPainter(self)
@@ -223,32 +224,24 @@ class DmrlMark(QWidget):
         painter.setBrush(QColor(DMRL_BLUE))
         painter.drawRoundedRect(rect, 8, 8)
 
-        slash = QPainterPath()
-        slash.moveTo(rect.left() + 110, rect.top())
-        slash.lineTo(rect.right(), rect.top())
-        slash.lineTo(rect.right() - 38, rect.bottom())
-        slash.lineTo(rect.left() + 80, rect.bottom())
-        slash.closeSubpath()
-        painter.fillPath(slash, QColor(DMRL_RED))
-
-        accent = QPainterPath()
-        accent.moveTo(rect.left() + 128, rect.top())
-        accent.lineTo(rect.left() + 146, rect.top())
-        accent.lineTo(rect.left() + 102, rect.bottom())
-        accent.lineTo(rect.left() + 84, rect.bottom())
-        accent.closeSubpath()
-        painter.fillPath(accent, QColor(DMRL_YELLOW))
+        bands = (
+            (QColor(DMRL_RED), 106, 130, 78, 102),
+            (QColor(DMRL_YELLOW), 135, 150, 107, 122),
+            (QColor(DMRL_RED), 156, 180, 128, 152),
+        )
+        for color, top_left, top_right, bottom_left, bottom_right in bands:
+            band = QPainterPath()
+            band.moveTo(rect.left() + top_left, rect.top())
+            band.lineTo(rect.left() + top_right, rect.top())
+            band.lineTo(rect.left() + bottom_right, rect.bottom())
+            band.lineTo(rect.left() + bottom_left, rect.bottom())
+            band.closeSubpath()
+        painter.fillPath(band, color)
 
         painter.setPen(QColor(INK))
-        font = QFont("Avenir Next", 25, QFont.Black)
+        font = QFont("Avenir Next", 23, QFont.Black)
         painter.setFont(font)
-        painter.drawText(rect.adjusted(14, 5, -10, -18), Qt.AlignLeft | Qt.AlignVCenter, "DMRL")
-
-        painter.setPen(QColor(DMRL_YELLOW))
-        small = QFont("Avenir Next", 6, QFont.Bold)
-        small.setLetterSpacing(QFont.AbsoluteSpacing, 0.4)
-        painter.setFont(small)
-        painter.drawText(rect.adjusted(15, 42, -48, -8), Qt.AlignLeft | Qt.AlignVCenter, "RACING LEAGUE")
+        painter.drawText(rect.adjusted(14, 0, -54, 0), Qt.AlignLeft | Qt.AlignVCenter, "DMRL")
         painter.end()
 
 
@@ -403,7 +396,7 @@ class DmrlQtApp(QMainWindow):
         layout.setSpacing(12)
 
         brand = DmrlMark()
-        subtitle = QLabel(DMRL_FULL_NAME)
+        subtitle = QLabel(DMRL_SHORT_NAME)
         subtitle.setObjectName("brandSub")
         layout.addWidget(brand)
         layout.addWidget(subtitle)

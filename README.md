@@ -20,7 +20,7 @@ The DMRL dashboard displays this testing-and-diagnostics disclaimer at startup. 
 
 ## Current Release
 
-- Version 1.2.0
+- Version 1.2.1
 - macOS-only packaged application: `DMRL Virtual Power Lab.app`
 - The legacy Python/Tk interface remains in source for development and fallback testing, but public distribution is now the macOS Dirty Mitten Racing League dashboard build.
 
@@ -152,6 +152,11 @@ python -m unittest discover
 See `docs/ROADMAP.md` for planned larger improvements and remaining simulator refinements.
 
 ## Release Notes
+
+### 1.2.1 - 2026-06-13
+
+- Cleaned up the sidebar logo so the compact mark reads as `DMRL` only, with `Dirty Mitten` as the sidebar label.
+- Kept the full Dirty Mitten Racing League name in About and documentation.
 
 ### 1.2.0 - 2026-06-13
 
