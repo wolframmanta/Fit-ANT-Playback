@@ -20,7 +20,7 @@ The DMRL dashboard displays this testing-and-diagnostics disclaimer at startup. 
 
 ## Current Release
 
-- Version 1.2.3
+- Version 1.2.4
 - macOS-only packaged application: `DMRL Virtual Power Lab.app`
 - The legacy Python/Tk interface remains in source for development and fallback testing, but public distribution is now the macOS Dirty Mitten Racing League dashboard build.
 
@@ -74,19 +74,14 @@ brew install libusb
 
 ## Usage
 
-1. Run the DMRL dashboard application on macOS (requires `sudo` for USB access to the ANT+ stick on some systems):
+1. Run the DMRL dashboard application on macOS:
    ```bash
-   sudo python fit_ant_playback_qt.py
+   ./scripts/run-local.sh
    ```
 
-   If your operating system allows user-level USB access, you can run:
+   If the ANT+ USB stick requires elevated access:
    ```bash
-   python fit_ant_playback_qt.py
-   ```
-
-   After an editable install, you can also run:
-   ```bash
-   fit-ant-playback-qt
+   ./scripts/run-local.sh --sudo
    ```
 
    The original Tk interface remains available from source for development/fallback use:
@@ -153,6 +148,11 @@ python -m unittest discover
 See `docs/ROADMAP.md` for planned larger improvements and remaining simulator refinements.
 
 ## Release Notes
+
+### 1.2.4 - 2026-06-27
+
+- Reworked simulated ride generation so climbs and rolling terrain use irregular terrain segments, rider drift, surges, recoveries, and cadence variation instead of repeatable waveform patterns.
+- Added a local `scripts/run-local.sh` launcher that bootstraps the app environment and can run with `--sudo` for ANT+ USB access.
 
 ### 1.2.3 - 2026-06-13
 

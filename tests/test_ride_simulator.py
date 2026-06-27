@@ -1,3 +1,4 @@
+import statistics
 import unittest
 
 from fit_ant_playback_core.ride_simulator import (
@@ -70,6 +71,32 @@ class RideSimulatorTests(unittest.TestCase):
             max(record.power for record in steady.records),
         )
 
+    def test_mountain_climb_peak_spacing_is_not_clockwork(self):
+        result = generate_ride(
+            RideSimulationConfig(
+                course_type="Mountain Climb",
+                duration_minutes=45,
+                average_power=220,
+                normalized_power=245,
+                weight_kg=75,
+                preferred_cadence=88,
+                variability=1.1,
+            ),
+            seed=123,
+        )
+        powers = [record.power for record in result.records]
+        smoothed = _rolling_average(powers, window=30)
+        peaks = _prominent_peaks(
+            smoothed,
+            min_gap=60,
+            threshold=result.average_power * 1.04,
+        )
+        intervals = [later - earlier for earlier, later in zip(peaks, peaks[1:])]
+
+        self.assertGreaterEqual(len(intervals), 6)
+        self.assertGreater(statistics.pstdev(intervals), 45)
+        self.assertGreaterEqual(min(powers), 105)
+
     def test_rejects_invalid_config(self):
         with self.assertRaises(RideSimulationError):
             generate_ride(
@@ -83,6 +110,32 @@ class RideSimulatorTests(unittest.TestCase):
                     variability=0.8,
                 )
             )
+
+
+def _rolling_average(values: list[int], *, window: int) -> list[float]:
+    averaged: list[float] = []
+    half_window = window // 2
+    for index in range(len(values)):
+        start = max(0, index - half_window)
+        end = min(len(values), index + half_window + 1)
+        averaged.append(sum(values[start:end]) / (end - start))
+    return averaged
+
+
+def _prominent_peaks(
+    values: list[float],
+    *,
+    min_gap: int,
+    threshold: float,
+) -> list[int]:
+    peaks: list[int] = []
+    for index in range(min_gap, len(values) - min_gap):
+        if values[index] < threshold:
+            continue
+        neighborhood = values[index - min_gap : index + min_gap + 1]
+        if values[index] == max(neighborhood) and (not peaks or index - peaks[-1] >= min_gap):
+            peaks.append(index)
+    return peaks
 
 
 if __name__ == "__main__":

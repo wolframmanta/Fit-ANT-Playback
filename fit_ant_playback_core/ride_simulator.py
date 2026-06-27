@@ -60,6 +60,126 @@ class RideSimulationError(ValueError):
     """Raised when simulator inputs cannot produce a ride."""
 
 
+@dataclass(frozen=True)
+class _NaturalCourseShape:
+    start_factor: float
+    finish_factor: float
+    long_amplitude: float
+    medium_amplitude: float
+    short_amplitude: float
+    effort_amplitude: float
+    jitter_amplitude: float
+    minimum_factor: float
+    long_segment_seconds: tuple[int, int]
+    medium_segment_seconds: tuple[int, int]
+    short_segment_seconds: tuple[int, int]
+    event_gap_seconds: tuple[int, int]
+    event_duration_seconds: tuple[int, int]
+    event_amount: tuple[float, float]
+    recovery_duration_seconds: tuple[int, int]
+    recovery_amount: tuple[float, float]
+    settle_event_chance: float
+
+
+_NATURAL_COURSE_SHAPES: dict[str, _NaturalCourseShape] = {
+    "Steady TT": _NaturalCourseShape(
+        start_factor=0.98,
+        finish_factor=1.01,
+        long_amplitude=0.020,
+        medium_amplitude=0.014,
+        short_amplitude=0.008,
+        effort_amplitude=0.010,
+        jitter_amplitude=0.005,
+        minimum_factor=0.72,
+        long_segment_seconds=(260, 720),
+        medium_segment_seconds=(70, 210),
+        short_segment_seconds=(18, 55),
+        event_gap_seconds=(360, 900),
+        event_duration_seconds=(10, 28),
+        event_amount=(0.015, 0.045),
+        recovery_duration_seconds=(15, 45),
+        recovery_amount=(0.010, 0.030),
+        settle_event_chance=0.20,
+    ),
+    "Endurance Ride": _NaturalCourseShape(
+        start_factor=0.95,
+        finish_factor=0.98,
+        long_amplitude=0.055,
+        medium_amplitude=0.036,
+        short_amplitude=0.018,
+        effort_amplitude=0.018,
+        jitter_amplitude=0.008,
+        minimum_factor=0.55,
+        long_segment_seconds=(360, 1200),
+        medium_segment_seconds=(90, 320),
+        short_segment_seconds=(20, 75),
+        event_gap_seconds=(240, 780),
+        event_duration_seconds=(8, 32),
+        event_amount=(0.030, 0.090),
+        recovery_duration_seconds=(20, 70),
+        recovery_amount=(0.015, 0.055),
+        settle_event_chance=0.35,
+    ),
+    "Rolling Course": _NaturalCourseShape(
+        start_factor=0.96,
+        finish_factor=1.00,
+        long_amplitude=0.135,
+        medium_amplitude=0.075,
+        short_amplitude=0.030,
+        effort_amplitude=0.026,
+        jitter_amplitude=0.010,
+        minimum_factor=0.42,
+        long_segment_seconds=(220, 760),
+        medium_segment_seconds=(55, 210),
+        short_segment_seconds=(14, 55),
+        event_gap_seconds=(120, 420),
+        event_duration_seconds=(8, 36),
+        event_amount=(0.035, 0.120),
+        recovery_duration_seconds=(18, 80),
+        recovery_amount=(0.020, 0.070),
+        settle_event_chance=0.28,
+    ),
+    "Hilly Course": _NaturalCourseShape(
+        start_factor=0.93,
+        finish_factor=1.01,
+        long_amplitude=0.205,
+        medium_amplitude=0.115,
+        short_amplitude=0.042,
+        effort_amplitude=0.032,
+        jitter_amplitude=0.012,
+        minimum_factor=0.36,
+        long_segment_seconds=(280, 980),
+        medium_segment_seconds=(65, 260),
+        short_segment_seconds=(16, 70),
+        event_gap_seconds=(90, 360),
+        event_duration_seconds=(10, 42),
+        event_amount=(0.040, 0.145),
+        recovery_duration_seconds=(20, 90),
+        recovery_amount=(0.020, 0.085),
+        settle_event_chance=0.22,
+    ),
+    "Mountain Climb": _NaturalCourseShape(
+        start_factor=0.90,
+        finish_factor=1.07,
+        long_amplitude=0.185,
+        medium_amplitude=0.135,
+        short_amplitude=0.060,
+        effort_amplitude=0.040,
+        jitter_amplitude=0.013,
+        minimum_factor=0.40,
+        long_segment_seconds=(420, 1600),
+        medium_segment_seconds=(85, 360),
+        short_segment_seconds=(18, 80),
+        event_gap_seconds=(75, 420),
+        event_duration_seconds=(8, 50),
+        event_amount=(0.035, 0.165),
+        recovery_duration_seconds=(20, 95),
+        recovery_amount=(0.020, 0.095),
+        settle_event_chance=0.16,
+    ),
+}
+
+
 def generate_ride(
     config: RideSimulationConfig,
     *,
@@ -73,7 +193,12 @@ def generate_ride(
     target_normalized = min(target_normalized, target_average * 2.2)
 
     raw_factors = _course_factors(config.course_type, duration_seconds, config.variability, rng)
-    power_values = _scale_to_targets(raw_factors, target_average, target_normalized)
+    power_values = _scale_to_targets(
+        raw_factors,
+        target_average,
+        target_normalized,
+        minimum_power_fraction=_minimum_power_fraction(config.course_type),
+    )
     cadence_values = _cadence_values(
         power_values=power_values,
         average_power=target_average,
@@ -146,58 +271,117 @@ def _course_factors(
         return _race_factors(duration_seconds, variability, rng)
     if course_type == "VO2 Intervals":
         return _vo2_factors(duration_seconds, variability, rng)
+    return _natural_factors(course_type, duration_seconds, variability, rng)
+
+
+def _natural_factors(
+    course_type: CourseType,
+    duration_seconds: int,
+    variability: float,
+    rng: random.Random,
+) -> list[float]:
+    shape = _NATURAL_COURSE_SHAPES[course_type]
+    terrain_long = _smooth_random_profile(duration_seconds, shape.long_segment_seconds, rng)
+    terrain_medium = _smooth_random_profile(duration_seconds, shape.medium_segment_seconds, rng)
+    terrain_short = _smooth_random_profile(duration_seconds, shape.short_segment_seconds, rng)
+    rider_effort = _mean_reverting_noise(
+        duration_seconds,
+        scale=shape.effort_amplitude * variability,
+        rng=rng,
+    )
 
     factors: list[float] = []
-    phase_a = rng.uniform(0, math.tau)
-    phase_b = rng.uniform(0, math.tau)
-    phase_c = rng.uniform(0, math.tau)
-
     for second in range(duration_seconds + 1):
-        t = float(second)
-        if course_type == "Steady TT":
-            factor = (
-                1.0
-                + variability * 0.025 * math.sin(t / 75 + phase_a)
-                + variability * 0.015 * math.sin(t / 17 + phase_b)
-            )
-        elif course_type == "Endurance Ride":
-            factor = (
-                1.0
-                + variability * 0.045 * math.sin(t / 180 + phase_a)
-                + variability * 0.030 * math.sin(t / 45 + phase_b)
-            )
-            if second % 420 in range(8):
-                factor += variability * 0.18
-        elif course_type == "Rolling Course":
-            factor = (
-                1.0
-                + variability * 0.16 * math.sin(t / 95 + phase_a)
-                + variability * 0.08 * math.sin(t / 31 + phase_b)
-                + variability * 0.035 * math.sin(t / 9 + phase_c)
-            )
-        elif course_type == "Hilly Course":
-            factor = (
-                1.0
-                + variability * 0.28 * math.sin(t / 210 + phase_a)
-                + variability * 0.11 * math.sin(t / 53 + phase_b)
-            )
-            if math.sin(t / 210 + phase_a) > 0.70:
-                factor += variability * 0.16
-        elif course_type == "Mountain Climb":
-            progress = second / max(1, duration_seconds)
-            factor = (
-                0.92
-                + 0.18 * progress
-                + variability * 0.10 * math.sin(t / 160 + phase_a)
-                + variability * 0.045 * math.sin(t / 29 + phase_b)
-            )
-        else:
-            factor = 1.0
+        progress = second / max(1, duration_seconds)
+        course_trend = shape.start_factor + (shape.finish_factor - shape.start_factor) * _smoothstep(progress)
+        terrain = (
+            shape.long_amplitude * terrain_long[second]
+            + shape.medium_amplitude * terrain_medium[second]
+            + shape.short_amplitude * terrain_short[second]
+        )
+        factor = course_trend + variability * terrain + rider_effort[second]
+        factor += rng.gauss(0.0, shape.jitter_amplitude * variability)
+        factors.append(max(shape.minimum_factor, factor))
 
-        factor += rng.uniform(-0.018, 0.018) * variability
-        factors.append(max(0.35, factor))
-
+    _apply_irregular_events(factors, shape, variability, rng)
     return _normalize_factors(factors)
+
+
+def _smooth_random_profile(
+    duration_seconds: int,
+    segment_seconds: tuple[int, int],
+    rng: random.Random,
+) -> list[float]:
+    values = [0.0 for _ in range(duration_seconds + 1)]
+    current = rng.uniform(-1.0, 1.0)
+    cursor = 0
+
+    while cursor <= duration_seconds:
+        segment_length = rng.randint(*segment_seconds)
+        next_value = rng.uniform(-1.0, 1.0)
+        end = min(duration_seconds, cursor + segment_length)
+        span = max(1, end - cursor)
+        for index in range(cursor, end + 1):
+            progress = (index - cursor) / span
+            values[index] = current + (next_value - current) * _smoothstep(progress)
+        current = next_value
+        cursor = end + 1
+
+    return values
+
+
+def _mean_reverting_noise(
+    duration_seconds: int,
+    *,
+    scale: float,
+    rng: random.Random,
+) -> list[float]:
+    values: list[float] = []
+    state = rng.uniform(-scale, scale)
+    for _ in range(duration_seconds + 1):
+        state = state * 0.994 + rng.gauss(0.0, scale * 0.075)
+        state = max(-scale * 2.2, min(scale * 2.2, state))
+        values.append(state)
+    return values
+
+
+def _apply_irregular_events(
+    factors: list[float],
+    shape: _NaturalCourseShape,
+    variability: float,
+    rng: random.Random,
+) -> None:
+    if not factors:
+        return
+
+    cursor = rng.randint(*shape.event_gap_seconds)
+    while cursor < len(factors):
+        event_duration = rng.randint(*shape.event_duration_seconds)
+        event_amount = rng.uniform(*shape.event_amount) * variability
+        if rng.random() < shape.settle_event_chance:
+            event_amount *= -rng.uniform(0.45, 0.85)
+
+        for offset in range(event_duration):
+            index = cursor + offset
+            if index >= len(factors):
+                break
+            progress = offset / max(1, event_duration - 1)
+            factors[index] += event_amount * math.sin(math.pi * progress)
+
+        recovery_start = cursor + event_duration
+        recovery_duration = rng.randint(*shape.recovery_duration_seconds)
+        recovery_amount = rng.uniform(*shape.recovery_amount) * variability
+        if event_amount < 0:
+            recovery_amount *= -0.45
+
+        for offset in range(recovery_duration):
+            index = recovery_start + offset
+            if index >= len(factors):
+                break
+            progress = offset / max(1, recovery_duration - 1)
+            factors[index] -= recovery_amount * math.sin(math.pi * progress)
+
+        cursor = recovery_start + recovery_duration + rng.randint(*shape.event_gap_seconds)
 
 
 def _race_factors(duration_seconds: int, variability: float, rng: random.Random) -> list[float]:
@@ -256,15 +440,27 @@ def _scale_to_targets(
     factors: list[float],
     target_average: float,
     target_normalized: float,
+    *,
+    minimum_power_fraction: float,
 ) -> list[int]:
     low = 0.0
     high = 6.0
-    best = _powers_for_contrast(factors, target_average, low)
+    best = _powers_for_contrast(
+        factors,
+        target_average,
+        low,
+        minimum_power_fraction=minimum_power_fraction,
+    )
     best_delta = abs(calculate_normalized_power(best) - target_normalized)
 
     for _ in range(32):
         mid = (low + high) / 2
-        candidate = _powers_for_contrast(factors, target_average, mid)
+        candidate = _powers_for_contrast(
+            factors,
+            target_average,
+            mid,
+            minimum_power_fraction=minimum_power_fraction,
+        )
         candidate_np = calculate_normalized_power(candidate)
         delta = abs(candidate_np - target_normalized)
         if delta < best_delta:
@@ -278,12 +474,33 @@ def _scale_to_targets(
     return best
 
 
+def _minimum_power_fraction(course_type: CourseType) -> float:
+    if course_type == "Mountain Climb":
+        return 0.50
+    if course_type == "Steady TT":
+        return 0.62
+    if course_type == "Endurance Ride":
+        return 0.36
+    if course_type == "Rolling Course":
+        return 0.28
+    if course_type == "Hilly Course":
+        return 0.32
+    if course_type == "VO2 Intervals":
+        return 0.24
+    return 0.16
+
+
 def _powers_for_contrast(
     factors: list[float],
     target_average: float,
     contrast: float,
+    *,
+    minimum_power_fraction: float,
 ) -> list[int]:
-    adjusted = [max(0.18, 1.0 + contrast * (factor - 1.0)) for factor in factors]
+    adjusted = [
+        max(minimum_power_fraction, 1.0 + contrast * (factor - 1.0))
+        for factor in factors
+    ]
     adjusted_average = _average(adjusted)
     scale = target_average / adjusted_average if adjusted_average > 0 else 1.0
     return [max(0, int(round(value * scale))) for value in adjusted]
@@ -298,10 +515,16 @@ def _cadence_values(
     rng: random.Random,
 ) -> list[int]:
     values: list[int] = []
+    cadence_drift = rng.uniform(-1.5, 1.5)
+    gear_offset = rng.uniform(-1.0, 1.0)
+    next_shift = rng.randint(20, 120)
+    total_records = max(1, len(power_values) - 1)
+
     for index, power in enumerate(power_values):
         relative = power / average_power if average_power > 0 else 1.0
         if course_type == "Mountain Climb":
-            cadence = preferred_cadence - 7 + (relative - 1.0) * 8
+            cadence = preferred_cadence - 7 + (relative - 1.0) * 5
+            cadence -= max(0.0, relative - 1.16) * 9
         elif course_type in {"Crit/Race Surges", "VO2 Intervals"}:
             cadence = preferred_cadence + (relative - 1.0) * 13
         elif course_type == "Steady TT":
@@ -309,10 +532,21 @@ def _cadence_values(
         else:
             cadence = preferred_cadence + (relative - 1.0) * 8
 
-        cadence += 1.8 * math.sin(index / 22) + rng.uniform(-1.5, 1.5)
+        if index >= next_shift:
+            gear_offset = gear_offset * 0.45 + rng.choice((-1.0, 1.0)) * rng.uniform(0.6, 2.4)
+            next_shift += rng.randint(25, 180)
+
+        cadence_drift = cadence_drift * 0.982 + rng.gauss(0.0, 0.16)
+        fatigue_drop = (index / total_records) * (2.5 if course_type == "Mountain Climb" else 0.8)
+        cadence += cadence_drift + gear_offset - fatigue_drop + rng.gauss(0.0, 0.75)
         values.append(max(45, min(125, int(round(cadence)))))
 
     return values
+
+
+def _smoothstep(value: float) -> float:
+    value = max(0.0, min(1.0, value))
+    return value * value * (3.0 - 2.0 * value)
 
 
 def _normalize_factors(values: list[float]) -> list[float]:
