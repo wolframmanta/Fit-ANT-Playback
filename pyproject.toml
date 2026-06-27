@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fit-ant-playback"
-version = "1.2.4"
+version = "1.2.5"
 description = "Replay FIT power and cadence data as an ANT+ Bike Power source."
 readme = "README.md"
 requires-python = ">=3.10"

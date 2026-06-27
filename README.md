@@ -20,7 +20,7 @@ The DMRL dashboard displays this testing-and-diagnostics disclaimer at startup. 
 
 ## Current Release
 
-- Version 1.2.4
+- Version 1.2.5
 - macOS-only packaged application: `DMRL Virtual Power Lab.app`
 - The legacy Python/Tk interface remains in source for development and fallback testing, but public distribution is now the macOS Dirty Mitten Racing League dashboard build.
 
@@ -148,6 +148,10 @@ python -m unittest discover
 See `docs/ROADMAP.md` for planned larger improvements and remaining simulator refinements.
 
 ## Release Notes
+
+### 1.2.5 - 2026-06-27
+
+- Renamed the playback `VI` metric to `Variation` in the dashboard, simulator summary, logs, and legacy interface so the effort variability value uses plain language.
 
 ### 1.2.4 - 2026-06-27
 

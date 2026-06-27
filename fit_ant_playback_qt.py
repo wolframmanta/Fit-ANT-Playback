@@ -553,7 +553,7 @@ class DmrlQtApp(QMainWindow):
         self.elapsed_card = MetricCard("Elapsed", "00:00", "")
         self.avg_card = MetricCard("Average", "0", "W")
         self.np_card = MetricCard("NP", "0", "W")
-        self.vi_card = MetricCard("VI", "-", "")
+        self.vi_card = MetricCard("Variation", "-", "")
         for card in (
             self.power_card,
             self.cadence_card,
@@ -916,7 +916,7 @@ class DmrlQtApp(QMainWindow):
             "Generated simulated ride: "
             f"{config.course_type}, {config.duration_minutes:g} min, "
             f"{result.average_power:.0f} W avg, {result.normalized_power:.0f} W NP, "
-            f"VI {result.variability_index:.2f}"
+            f"variation {result.variability_index:.2f}"
         )
 
     def _update_sim_summary(
@@ -927,7 +927,7 @@ class DmrlQtApp(QMainWindow):
         self.sim_summary.setText(
             "Loaded simulated course: "
             f"{config.course_type} | {result.average_power:.0f} W avg | "
-            f"{result.normalized_power:.0f} W NP | VI {result.variability_index:.2f} | "
+            f"{result.normalized_power:.0f} W NP | Variation {result.variability_index:.2f} | "
             f"{result.watts_per_kg:.2f} W/kg"
         )
 

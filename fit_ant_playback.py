@@ -480,7 +480,7 @@ class FitAntPlaybackApp:
         for column, (label, variable) in enumerate([
             ("Avg:", self.sim_summary_power_var),
             ("NP:", self.sim_summary_np_var),
-            ("VI:", self.sim_summary_vi_var),
+            ("Variation:", self.sim_summary_vi_var),
             ("W/kg:", self.sim_summary_wkg_var),
         ]):
             label_column = column * 2
