@@ -108,6 +108,27 @@ class RideSimulatorTests(unittest.TestCase):
         self.assertLessEqual(max(cadences) - min(cadences), 2)
         self.assertLessEqual(sum(1 for delta in deltas if delta), 8)
 
+    def test_rolling_course_includes_standing_power_spikes(self):
+        result = generate_ride(
+            RideSimulationConfig(
+                course_type="Rolling Course",
+                duration_minutes=60,
+                average_power=230,
+                normalized_power=285,
+                weight_kg=75,
+                preferred_cadence=88,
+                variability=1.1,
+            ),
+            seed=123,
+        )
+
+        spikes = _low_cadence_power_spike_segments(result)
+
+        self.assertGreaterEqual(len(spikes), 2)
+        self.assertLessEqual(len(spikes), 5)
+        self.assertTrue(all(segment["peak_power"] >= result.average_power * 2.2 for segment in spikes))
+        self.assertTrue(any(segment["min_cadence"] <= 58 for segment in spikes))
+
     def test_race_cadence_can_respond_without_jumping(self):
         result = generate_ride(
             RideSimulationConfig(
@@ -180,6 +201,30 @@ def _rolling_average(values: list[int], *, window: int) -> list[float]:
 def _consecutive_cadence_deltas(result) -> list[int]:
     cadences = [record.cadence for record in result.records]
     return [abs(later - earlier) for earlier, later in zip(cadences, cadences[1:])]
+
+
+def _low_cadence_power_spike_segments(result) -> list[dict[str, float]]:
+    threshold = result.average_power * 1.7
+    segments: list[dict[str, float]] = []
+    start: int | None = None
+    for index, record in enumerate(result.records):
+        in_spike = record.power >= threshold and 50 <= record.cadence <= 70
+        if in_spike and start is None:
+            start = index
+        if start is not None and (not in_spike or index == len(result.records) - 1):
+            end = index - 1 if not in_spike else index
+            duration = end - start + 1
+            if duration >= 3:
+                window = result.records[start : end + 1]
+                segments.append(
+                    {
+                        "duration": duration,
+                        "peak_power": max(record.power for record in window),
+                        "min_cadence": min(record.cadence for record in window),
+                    }
+                )
+            start = None
+    return segments
 
 
 def _prominent_peaks(

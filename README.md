@@ -20,7 +20,7 @@ The DMRL dashboard displays this testing-and-diagnostics disclaimer at startup. 
 
 ## Current Release
 
-- Version 1.2.6
+- Version 1.2.11
 - macOS-only packaged application: `DMRL Virtual Power Lab.app`
 - The legacy Python/Tk interface remains in source for development and fallback testing, but public distribution is now the macOS Dirty Mitten Racing League dashboard build.
 
@@ -149,9 +149,32 @@ See `docs/ROADMAP.md` for planned larger improvements and remaining simulator re
 
 ## Release Notes
 
+### 1.2.11 - 2026-07-28
+
+- Rolled the complete ANT protocol and PyUSB connection path back to the last-known-good 1.2.5 implementation after the manufacturer-identity experiment caused connection regressions.
+- Removed Magene manufacturer/product common pages; the source again reports as a standard ANT+ Bike Power device using only data page 0x10.
+
+### 1.2.10 - 2026-07-28
+
+- Restored the proven physical ANT+ stick reset used by earlier working builds, then reacquires a fresh USB handle after macOS re-enumerates the stick to avoid both stale-handle error 19 and write error 13.
+- Removed the ineffective administrator-relaunch prompt introduced in 1.2.9.
+
+### 1.2.9 - 2026-07-28
+
+- Added a native macOS administrator restart prompt when libusb reports error 13, allowing the packaged app to relaunch with the raw USB access required by the ANT+ stick.
+
+### 1.2.8 - 2026-07-28
+
+- Fixed macOS libusb error 19 during ANT+ connection by avoiding a physical stick reset that could invalidate the device handle, reusing the active USB configuration, and automatically reacquiring the stick if macOS re-enumerates it during setup.
+
+### 1.2.7 - 2026-07-28
+
+- Added ANT+ common manufacturer/product information pages so the simulated Bike Power source reports Magene power meter metadata to receivers that display ANT+ device identity.
+
 ### 1.2.6 - 2026-07-28
 
 - Smoothed simulated ride cadence so rider RPM changes use realistic inertia, rate limits, gear-change easing, lower pedal-noise jitter, and steady-state hysteresis to prevent visible RPM chatter.
+- Added occasional standing-effort power spikes on natural ride profiles, with short high-power surges and cadence dropping into a realistic 50-70 RPM range.
 
 ### 1.2.5 - 2026-06-27
 

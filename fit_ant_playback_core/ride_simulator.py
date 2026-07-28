@@ -179,6 +179,22 @@ _NATURAL_COURSE_SHAPES: dict[str, _NaturalCourseShape] = {
     ),
 }
 
+_STANDING_SPIKE_RATE_PER_HOUR: dict[str, float] = {
+    "Steady TT": 0.7,
+    "Endurance Ride": 2.0,
+    "Rolling Course": 2.7,
+    "Hilly Course": 3.1,
+    "Mountain Climb": 2.8,
+}
+
+_STANDING_SPIKE_AMOUNT: dict[str, tuple[float, float]] = {
+    "Steady TT": (0.14, 0.26),
+    "Endurance Ride": (0.22, 0.38),
+    "Rolling Course": (0.28, 0.52),
+    "Hilly Course": (0.30, 0.58),
+    "Mountain Climb": (0.26, 0.48),
+}
+
 
 def generate_ride(
     config: RideSimulationConfig,
@@ -192,7 +208,7 @@ def generate_ride(
     target_normalized = max(target_average, float(config.normalized_power))
     target_normalized = min(target_normalized, target_average * 2.2)
 
-    raw_factors = _course_factors(config.course_type, duration_seconds, config.variability, rng)
+    raw_factors, standing_effort = _course_factors(config.course_type, duration_seconds, config.variability, rng)
     power_values = _scale_to_targets(
         raw_factors,
         target_average,
@@ -204,6 +220,7 @@ def generate_ride(
         average_power=target_average,
         preferred_cadence=config.preferred_cadence,
         course_type=config.course_type,
+        standing_effort=standing_effort,
         rng=rng,
     )
 
@@ -266,11 +283,11 @@ def _course_factors(
     duration_seconds: int,
     variability: float,
     rng: random.Random,
-) -> list[float]:
+) -> tuple[list[float], list[float]]:
     if course_type == "Crit/Race Surges":
-        return _race_factors(duration_seconds, variability, rng)
+        return _race_factors(duration_seconds, variability, rng), [0.0 for _ in range(duration_seconds + 1)]
     if course_type == "VO2 Intervals":
-        return _vo2_factors(duration_seconds, variability, rng)
+        return _vo2_factors(duration_seconds, variability, rng), [0.0 for _ in range(duration_seconds + 1)]
     return _natural_factors(course_type, duration_seconds, variability, rng)
 
 
@@ -279,7 +296,7 @@ def _natural_factors(
     duration_seconds: int,
     variability: float,
     rng: random.Random,
-) -> list[float]:
+) -> tuple[list[float], list[float]]:
     shape = _NATURAL_COURSE_SHAPES[course_type]
     terrain_long = _smooth_random_profile(duration_seconds, shape.long_segment_seconds, rng)
     terrain_medium = _smooth_random_profile(duration_seconds, shape.medium_segment_seconds, rng)
@@ -304,7 +321,8 @@ def _natural_factors(
         factors.append(max(shape.minimum_factor, factor))
 
     _apply_irregular_events(factors, shape, variability, rng)
-    return _normalize_factors(factors)
+    standing_effort = _apply_standing_spikes(factors, course_type, variability, rng)
+    return _normalize_factors(factors), standing_effort
 
 
 def _smooth_random_profile(
@@ -382,6 +400,64 @@ def _apply_irregular_events(
             factors[index] -= recovery_amount * math.sin(math.pi * progress)
 
         cursor = recovery_start + recovery_duration + rng.randint(*shape.event_gap_seconds)
+
+
+def _apply_standing_spikes(
+    factors: list[float],
+    course_type: CourseType,
+    variability: float,
+    rng: random.Random,
+) -> list[float]:
+    standing_effort = [0.0 for _ in factors]
+    if len(factors) < 300 or course_type not in _STANDING_SPIKE_RATE_PER_HOUR:
+        return standing_effort
+
+    duration_seconds = len(factors) - 1
+    rate = _STANDING_SPIKE_RATE_PER_HOUR[course_type]
+    expected_count = (duration_seconds / 3600) * rate * max(0.65, min(1.15, variability))
+    spike_count = int(expected_count)
+    if rng.random() < expected_count - spike_count:
+        spike_count += 1
+    if duration_seconds >= 1800 and course_type != "Steady TT":
+        spike_count = max(1, spike_count)
+    if duration_seconds >= 3600 and course_type in {"Endurance Ride", "Rolling Course", "Hilly Course", "Mountain Climb"}:
+        spike_count = max(2, spike_count)
+    if spike_count <= 0:
+        return standing_effort
+
+    min_amount, max_amount = _STANDING_SPIKE_AMOUNT[course_type]
+    spacing = duration_seconds / (spike_count + 1)
+    for spike_index in range(spike_count):
+        center = int(round((spike_index + 1) * spacing + rng.uniform(-spacing * 0.18, spacing * 0.18)))
+        duration = rng.randint(15, 22)
+        start = max(20, center - duration // 2)
+        amount = rng.uniform(min_amount, max_amount) * (0.80 + 0.25 * variability)
+
+        for offset in range(duration):
+            index = start + offset
+            if index >= len(factors):
+                break
+            progress = offset / max(1, duration - 1)
+            if progress < 0.22:
+                shape = _smoothstep(progress / 0.22)
+            elif progress > 0.78:
+                shape = _smoothstep((1.0 - progress) / 0.22)
+            else:
+                shape = 1.0
+            factors[index] += amount * shape
+            standing_effort[index] = max(standing_effort[index], shape)
+
+        recovery_start = start + duration
+        recovery_duration = rng.randint(28, 70)
+        recovery_amount = amount * rng.uniform(0.10, 0.20)
+        for offset in range(recovery_duration):
+            index = recovery_start + offset
+            if index >= len(factors):
+                break
+            progress = offset / max(1, recovery_duration - 1)
+            factors[index] -= recovery_amount * math.sin(math.pi * progress)
+
+    return standing_effort
 
 
 def _race_factors(duration_seconds: int, variability: float, rng: random.Random) -> list[float]:
@@ -512,6 +588,7 @@ def _cadence_values(
     average_power: float,
     preferred_cadence: int,
     course_type: CourseType,
+    standing_effort: list[float],
     rng: random.Random,
 ) -> list[int]:
     values: list[int] = []
@@ -574,6 +651,11 @@ def _cadence_values(
         else:
             target_cadence = preferred_cadence + (relative - 1.0) * 8
 
+        standing = standing_effort[index] if index < len(standing_effort) else 0.0
+        if standing > 0:
+            standing_target = max(50.0, min(68.0, 58.0 - max(0.0, relative - 1.0) * 6.0))
+            target_cadence = target_cadence * (1.0 - standing) + standing_target * standing
+
         if index >= next_shift:
             gear_target = gear_target * 0.5 + rng.choice((-1.0, 1.0)) * rng.uniform(0.7, 2.2)
             next_shift += rng.randint(40, 210)
@@ -583,16 +665,19 @@ def _cadence_values(
         pedal_noise = pedal_noise * 0.86 + rng.gauss(0.0, pedal_noise_amount)
         fatigue_drop = (index / total_records) * (2.5 if course_type == "Mountain Climb" else 0.8)
         desired = target_cadence + cadence_drift + gear_offset - fatigue_drop + pedal_noise
-        delta = (desired - cadence) * response
-        delta = max(-max_step, min(max_step, delta))
+        effective_response = max(response, 0.30 * standing)
+        effective_max_step = max(max_step, 3.0 * standing)
+        delta = (desired - cadence) * effective_response
+        delta = max(-effective_max_step, min(effective_max_step, delta))
         cadence += delta
         candidate = max(45, min(125, int(round(cadence))))
+        effective_report_threshold = min(report_threshold, 0.70) if standing > 0.05 else report_threshold
         if reported_cadence is None:
             reported_cadence = candidate
-        elif cadence >= reported_cadence + report_threshold:
-            reported_cadence += 1
-        elif cadence <= reported_cadence - report_threshold:
-            reported_cadence -= 1
+        elif cadence >= reported_cadence + effective_report_threshold:
+            reported_cadence += 2 if standing > 0.75 else 1
+        elif cadence <= reported_cadence - effective_report_threshold:
+            reported_cadence -= 2 if standing > 0.75 else 1
         values.append(reported_cadence)
 
     return values
