@@ -71,6 +71,61 @@ class RideSimulatorTests(unittest.TestCase):
             max(record.power for record in steady.records),
         )
 
+    def test_cadence_changes_are_rate_limited(self):
+        result = generate_ride(
+            RideSimulationConfig(
+                course_type="Rolling Course",
+                duration_minutes=20,
+                average_power=230,
+                normalized_power=275,
+                weight_kg=75,
+                preferred_cadence=88,
+                variability=1.1,
+            ),
+            seed=321,
+        )
+        deltas = _consecutive_cadence_deltas(result)
+
+        self.assertLessEqual(max(deltas), 2)
+        self.assertGreater(statistics.pstdev([record.cadence for record in result.records]), 1.2)
+
+    def test_steady_state_cadence_does_not_chatter(self):
+        result = generate_ride(
+            RideSimulationConfig(
+                course_type="Steady TT",
+                duration_minutes=20,
+                average_power=230,
+                normalized_power=245,
+                weight_kg=75,
+                preferred_cadence=88,
+                variability=1.1,
+            ),
+            seed=123,
+        )
+        cadences = [record.cadence for record in result.records]
+        deltas = _consecutive_cadence_deltas(result)
+
+        self.assertLessEqual(max(cadences) - min(cadences), 2)
+        self.assertLessEqual(sum(1 for delta in deltas if delta), 8)
+
+    def test_race_cadence_can_respond_without_jumping(self):
+        result = generate_ride(
+            RideSimulationConfig(
+                course_type="Crit/Race Surges",
+                duration_minutes=12,
+                average_power=260,
+                normalized_power=340,
+                weight_kg=75,
+                preferred_cadence=92,
+                variability=1.1,
+            ),
+            seed=999,
+        )
+        deltas = _consecutive_cadence_deltas(result)
+
+        self.assertLessEqual(max(deltas), 3)
+        self.assertGreater(max(record.cadence for record in result.records), 96)
+
     def test_mountain_climb_peak_spacing_is_not_clockwork(self):
         result = generate_ride(
             RideSimulationConfig(
@@ -120,6 +175,11 @@ def _rolling_average(values: list[int], *, window: int) -> list[float]:
         end = min(len(values), index + half_window + 1)
         averaged.append(sum(values[start:end]) / (end - start))
     return averaged
+
+
+def _consecutive_cadence_deltas(result) -> list[int]:
+    cadences = [record.cadence for record in result.records]
+    return [abs(later - earlier) for earlier, later in zip(cadences, cadences[1:])]
 
 
 def _prominent_peaks(

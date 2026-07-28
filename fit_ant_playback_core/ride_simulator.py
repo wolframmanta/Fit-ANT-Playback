@@ -516,30 +516,84 @@ def _cadence_values(
 ) -> list[int]:
     values: list[int] = []
     cadence_drift = rng.uniform(-1.5, 1.5)
-    gear_offset = rng.uniform(-1.0, 1.0)
-    next_shift = rng.randint(20, 120)
+    gear_offset = rng.uniform(-0.8, 0.8)
+    gear_target = gear_offset
+    pedal_noise = rng.gauss(0.0, 0.25)
+    next_shift = rng.randint(35, 150)
     total_records = max(1, len(power_values) - 1)
+    cadence = float(preferred_cadence) + rng.uniform(-1.0, 1.0)
+    reported_cadence: int | None = None
+
+    if course_type in {"Crit/Race Surges", "VO2 Intervals"}:
+        response = 0.20
+        max_step = 3.0
+        report_threshold = 0.65
+        drift_noise = 0.045
+        pedal_noise_amount = 0.13
+        gear_response = 0.055
+    elif course_type == "Mountain Climb":
+        response = 0.07
+        max_step = 0.8
+        report_threshold = 1.20
+        drift_noise = 0.025
+        pedal_noise_amount = 0.08
+        gear_response = 0.035
+    elif course_type == "Steady TT":
+        response = 0.035
+        max_step = 0.35
+        report_threshold = 1.75
+        drift_noise = 0.012
+        pedal_noise_amount = 0.035
+        gear_response = 0.018
+    elif course_type == "Endurance Ride":
+        response = 0.055
+        max_step = 0.5
+        report_threshold = 1.45
+        drift_noise = 0.018
+        pedal_noise_amount = 0.05
+        gear_response = 0.022
+    else:
+        response = 0.09
+        max_step = 1.0
+        report_threshold = 0.95
+        drift_noise = 0.030
+        pedal_noise_amount = 0.09
+        gear_response = 0.040
 
     for index, power in enumerate(power_values):
         relative = power / average_power if average_power > 0 else 1.0
         if course_type == "Mountain Climb":
-            cadence = preferred_cadence - 7 + (relative - 1.0) * 5
-            cadence -= max(0.0, relative - 1.16) * 9
+            target_cadence = preferred_cadence - 7 + (relative - 1.0) * 5
+            target_cadence -= max(0.0, relative - 1.16) * 9
         elif course_type in {"Crit/Race Surges", "VO2 Intervals"}:
-            cadence = preferred_cadence + (relative - 1.0) * 13
+            target_cadence = preferred_cadence + (relative - 1.0) * 13
         elif course_type == "Steady TT":
-            cadence = preferred_cadence + (relative - 1.0) * 4
+            target_cadence = preferred_cadence + (relative - 1.0) * 2.5
+        elif course_type == "Endurance Ride":
+            target_cadence = preferred_cadence + (relative - 1.0) * 4.5
         else:
-            cadence = preferred_cadence + (relative - 1.0) * 8
+            target_cadence = preferred_cadence + (relative - 1.0) * 8
 
         if index >= next_shift:
-            gear_offset = gear_offset * 0.45 + rng.choice((-1.0, 1.0)) * rng.uniform(0.6, 2.4)
-            next_shift += rng.randint(25, 180)
+            gear_target = gear_target * 0.5 + rng.choice((-1.0, 1.0)) * rng.uniform(0.7, 2.2)
+            next_shift += rng.randint(40, 210)
 
-        cadence_drift = cadence_drift * 0.982 + rng.gauss(0.0, 0.16)
+        gear_offset += (gear_target - gear_offset) * gear_response
+        cadence_drift = cadence_drift * 0.994 + rng.gauss(0.0, drift_noise)
+        pedal_noise = pedal_noise * 0.86 + rng.gauss(0.0, pedal_noise_amount)
         fatigue_drop = (index / total_records) * (2.5 if course_type == "Mountain Climb" else 0.8)
-        cadence += cadence_drift + gear_offset - fatigue_drop + rng.gauss(0.0, 0.75)
-        values.append(max(45, min(125, int(round(cadence)))))
+        desired = target_cadence + cadence_drift + gear_offset - fatigue_drop + pedal_noise
+        delta = (desired - cadence) * response
+        delta = max(-max_step, min(max_step, delta))
+        cadence += delta
+        candidate = max(45, min(125, int(round(cadence))))
+        if reported_cadence is None:
+            reported_cadence = candidate
+        elif cadence >= reported_cadence + report_threshold:
+            reported_cadence += 1
+        elif cadence <= reported_cadence - report_threshold:
+            reported_cadence -= 1
+        values.append(reported_cadence)
 
     return values
 
